@@ -12,6 +12,7 @@ en ny/kopierad DataFrame.
 
 from datetime import datetime, timedelta
 import pandas as pd
+import numpy as np
 
 
 def matlab_datenum_to_datetime(matlab_datenum: float) -> datetime:
@@ -65,3 +66,73 @@ def compute_age(df: pd.DataFrame) -> pd.DataFrame:
     )
     df["age"] = df["photo_taken"] - birth_year
     return df
+
+
+def flag_face_detection(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Flaggar rader där ingen ansikte detekterades i bilden.
+
+    face_score == -inf betyder att ansiktsdetektorn inte hittade något
+    ansikte alls i bilden. Detta är inte "saknad data" i statistisk
+    mening utan en kvalitetsindikator från detektorn, och hanteras
+    därför separat från t.ex. gender/name-brister.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame som innehåller kolumnen 'face_score'.
+
+    Returns
+    -------
+    pd.DataFrame
+        Kopia av df med en tillagd boolesk kolumn 'face_detected'
+        (False där face_score == -inf, annars True).
+
+    Notes
+    -----
+    Denna funktion tar INTE bort några rader. Rader utan detekterat
+    ansikte är oanvändbara för embedding-extraktion längre fram i
+    pipelinen, men filtreringen görs medvetet separat (se
+    filter_valid_faces) så att bortfallet kan redovisas och
+    visualiseras i EDA innan det faktiskt sker.
+    """
+    df = df.copy()
+    df["face_detected"] = df["face_score"] != -np.inf
+    return df
+
+
+def filter_valid_faces(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Filtrerar bort rader utan detekterat ansikte.
+
+    Kräver att flag_face_detection() redan har körts på df, så att
+    kolumnen 'face_detected' finns.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame som innehåller den booleska kolumnen 'face_detected'.
+
+    Returns
+    -------
+    pd.DataFrame
+        Kopia av df där endast rader med face_detected == True behålls,
+        med index återställt.
+
+    Raises
+    ------
+    KeyError
+        Om kolumnen 'face_detected' inte finns i df.
+
+    Notes
+    -----
+    Denna funktion anropas medvetet separat från flag_face_detection,
+    och först på den punkt i pipelinen där rader utan ansikte faktiskt
+    blir oanvändbara (t.ex. precis innan embedding-extraktion), inte
+    redan i den generella dataförberedelsen.
+    """
+    if "face_detected" not in df.columns:
+        raise KeyError(
+            "Kolumnen 'face_detected' saknas — kör flag_face_detection() först."
+        )
+    return df[df["face_detected"]].reset_index(drop=True)
