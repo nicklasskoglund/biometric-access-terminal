@@ -136,3 +136,109 @@ def filter_valid_faces(df: pd.DataFrame) -> pd.DataFrame:
             "Kolumnen 'face_detected' saknas — kör flag_face_detection() först."
         )
     return df[df["face_detected"]].reset_index(drop=True)
+
+
+def flag_missing_gender(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Flaggar rader där gender saknas.
+
+    gender är NaN för ~4,2% av raderna i WIKI-metadatan. Detta är äkta,
+    icke-imputerbar saknad data — det finns ingen tillförlitlig metod
+    att gissa kön utifrån andra features i detta projekt, så vi
+    imputerar INTE. Rader flaggas istället, så att de kan exkluderas
+    specifikt när gender används som målvariabel (t.ex. i ålder-
+    /kön-estimeringsmodellen), utan att påverka andra delar av
+    pipelinen (t.ex. embeddings, klustring) där gender inte krävs.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame som innehåller kolumnen 'gender'.
+
+    Returns
+    -------
+    pd.DataFrame
+        Kopia av df med en tillagd boolesk kolumn 'gender_missing'
+        (True där gender är NaN, annars False).
+
+    Notes
+    -----
+    Denna funktion tar INTE bort några rader och imputerar INTE
+    saknade värden. Filtrering görs separat, se filter_valid_gender(),
+    och anropas endast där gender faktiskt behövs som målvariabel.
+    """
+    df = df.copy()
+    df["gender_missing"] = df["gender"].isna()
+    return df
+
+
+def filter_valid_gender(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Filtrerar bort rader där gender saknas.
+
+    Kräver att flag_missing_gender() redan har körts på df, så att
+    kolumnen 'gender_missing' finns.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame som innehåller den booleska kolumnen 'gender_missing'.
+
+    Returns
+    -------
+    pd.DataFrame
+        Kopia av df där endast rader med gender_missing == False
+        behålls, med index återställt.
+
+    Raises
+    ------
+    KeyError
+        Om kolumnen 'gender_missing' inte finns i df.
+
+    Notes
+    -----
+    Anropas medvetet separat från flag_missing_gender, och endast på
+    den punkt i pipelinen där gender faktiskt krävs (t.ex. träning av
+    ålder-/kön-estimeringsmodellen), inte i den generella
+    dataförberedelsen.
+    """
+    if "gender_missing" not in df.columns:
+        raise KeyError(
+            "Kolumnen 'gender_missing' saknas — kör flag_missing_gender() först."
+        )
+    return df[~df["gender_missing"]].reset_index(drop=True)
+
+
+def flag_second_face(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Flaggar om ett andra ansikte detekterades i bilden.
+
+    second_face_score är NaN för de allra flesta rader, men detta är
+    INTE saknad data i statistisk mening — NaN betyder att detektorn
+    inte hittade något andra ansikte i bilden, vilket är det förväntade
+    och vanligaste fallet. Att imputera NaN med t.ex. 0 vore missvisande,
+    eftersom 0 skulle kunna tolkas som "ett andra ansikte hittades, men
+    med mycket lågt konfidensvärde" — en annan betydelse än "inget andra
+    ansikte alls".
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame som innehåller kolumnen 'second_face_score'.
+
+    Returns
+    -------
+    pd.DataFrame
+        Kopia av df med en tillagd boolesk kolumn 'has_second_face'
+        (True där second_face_score inte är NaN, annars False).
+
+    Notes
+    -----
+    second_face_score-kolumnen behålls oförändrad. Denna funktion
+    lägger endast till en tydlig, entydig boolesk flagga som gör
+    semantiken explicit, istället för att förlita sig på NaN-tolkning
+    längre fram i pipelinen.
+    """
+    df = df.copy()
+    df["has_second_face"] = df["second_face_score"].notna()
+    return df
