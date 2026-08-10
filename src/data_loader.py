@@ -1,10 +1,10 @@
-"""Data loading utilities for the IMDB-WIKI (WIKI subset) dataset.
+"""Inläsningsfunktioner för IMDB-WIKI-datasetet (WIKI-delen).
 
-This module is only responsible for reading the raw .mat metadata file
-into a pandas DataFrame, with no cleaning or transformation. Cleaning
-(handling missing values, converting MATLAB date numbers to real dates,
-encoding categorical variables) belongs in `preprocessing.py`, per the
-project's separation between raw ingestion and data preparation.
+Denna modul ansvarar enbart för att läsa den råa .mat-metadatafilen till
+en pandas DataFrame, utan någon rensning eller transformation. Rensning
+(hantering av saknade värden, konvertering av MATLAB-datum till riktiga
+datum, kodning av kategoriska variabler) hör hemma i `preprocessing.py`,
+enligt projektets separation mellan rå inläsning och databeredelse.
 """
 
 from pathlib import Path
@@ -15,34 +15,34 @@ from scipy.io import loadmat
 
 
 def load_wiki_mat(mat_path: Union[str, Path]) -> pd.DataFrame:
-    """Load the WIKI subset metadata from wiki.mat into a flat DataFrame.
+    """Läs in WIKI-delens metadata från wiki.mat till en platt DataFrame.
 
     Parameters
     ----------
-    mat_path : str or Path
-        Path to the wiki.mat file (e.g. data/raw/wiki_crop/wiki.mat).
+    mat_path : str eller Path
+        Sökväg till wiki.mat-filen (t.ex. data/raw/wiki_crop/wiki.mat).
 
     Returns
     -------
     pd.DataFrame
-        One row per face image, with the following raw columns:
+        En rad per ansiktsbild, med följande råa kolumner:
 
-        - full_path : str, relative path to the cropped face image
-        - dob_matlab : int, date of birth as a MATLAB serial date number
-          (NOT yet converted to a real date — see preprocessing.py)
-        - photo_taken : int, year the photo was taken
-        - gender : float, 1.0 = male, 0.0 = female, NaN = unknown
-        - face_score : float, face detector confidence;
-          -inf means no face was detected
-        - second_face_score : float, confidence of a second face in the
-          image if one was detected, else NaN
-        - name : str or None, celebrity name as listed on Wikipedia
-        - face_location : np.ndarray, [x1, y1, x2, y2] bounding box
+        - full_path : str, relativ sökväg till det beskurna ansiktsfotot
+        - dob_matlab : int, födelsedatum som ett MATLAB serial date number
+          (ÄNNU EJ konverterat till ett riktigt datum — se preprocessing.py)
+        - photo_taken : int, året fotot togs
+        - gender : float, 1.0 = man, 0.0 = kvinna, NaN = okänt
+        - face_score : float, ansiktsdetektorns konfidensvärde;
+          -inf betyder att inget ansikte detekterades
+        - second_face_score : float, konfidensvärde för ett eventuellt
+          andra ansikte i bilden, annars NaN
+        - name : str eller None, celebritetens namn enligt Wikipedia
+        - face_location : np.ndarray, [x1, y1, x2, y2] boundingbox
 
     Notes
     -----
-    No rows are dropped and no missing values are imputed here. This
-    function only reshapes the MATLAB struct-of-arrays into a tidy
+    Inga rader tas bort och inga saknade värden imputeras här. Funktionen
+    formar enbart om MATLAB-structen (struct-of-arrays) till en tidy
     DataFrame.
     """
     mat_path = Path(mat_path)
