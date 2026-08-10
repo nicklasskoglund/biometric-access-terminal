@@ -242,3 +242,78 @@ def flag_second_face(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["has_second_face"] = df["second_face_score"].notna()
     return df
+
+
+MIN_PLAUSIBLE_AGE = 0
+MAX_PLAUSIBLE_AGE = 120
+
+
+def flag_implausible_age(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Flaggar rader med orimlig ålder.
+
+    Ålder anses orimlig om den är negativ (fotot daterat före personens
+    födelse) eller orealistiskt hög (> 120 år). Detta är ett känt
+    problem i IMDB-WIKI: metadata är skrapad från Wikipedia, och
+    felaktiga namn-till-person-matchningar kan resultera i ett
+    felaktigt kopplat födelsedatum för den avbildade personen.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame som innehåller kolumnen 'age' (se compute_age).
+
+    Returns
+    -------
+    pd.DataFrame
+        Kopia av df med en tillagd boolesk kolumn 'age_implausible'
+        (True om age < 0 eller age > 120, annars False). Rader där
+        age är NaN (dvs. dob_matlab saknades) flaggas också som True,
+        eftersom en okänd ålder inte kan anses rimlig.
+
+    Notes
+    -----
+    Denna funktion tar INTE bort några rader. Filtrering görs separat,
+    se filter_valid_age(), och anropas där modellering faktiskt kräver
+    en tillförlitlig ålder (t.ex. träning av åldersestimeringsmodellen).
+    """
+    df = df.copy()
+    age_out_of_range = (df["age"] < MIN_PLAUSIBLE_AGE) | (df["age"] > MAX_PLAUSIBLE_AGE)
+    df["age_implausible"] = age_out_of_range | df["age"].isna()
+    return df
+
+
+def filter_valid_age(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Filtrerar bort rader med orimlig eller okänd ålder.
+
+    Kräver att flag_implausible_age() redan har körts på df, så att
+    kolumnen 'age_implausible' finns.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame som innehåller den booleska kolumnen 'age_implausible'.
+
+    Returns
+    -------
+    pd.DataFrame
+        Kopia av df där endast rader med age_implausible == False
+        behålls, med index återställt.
+
+    Raises
+    ------
+    KeyError
+        Om kolumnen 'age_implausible' inte finns i df.
+
+    Notes
+    -----
+    Anropas medvetet separat från flag_implausible_age, och endast på
+    den punkt i pipelinen där en tillförlitlig ålder faktiskt krävs
+    (t.ex. träning av åldersestimeringsmodellen).
+    """
+    if "age_implausible" not in df.columns:
+        raise KeyError(
+            "Kolumnen 'age_implausible' saknas — kör flag_implausible_age() först."
+        )
+    return df[~df["age_implausible"]].reset_index(drop=True)
