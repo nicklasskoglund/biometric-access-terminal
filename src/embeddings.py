@@ -5,10 +5,11 @@ antingen från redan beskurna dataset-bilder (wiki_crop) eller från
 beskurna live-frames i webcam-pipelinen.
 """
 
-import numpy as np
 from deepface import DeepFace
-from utils import BoundingBox
+import numpy as np
 from tqdm import tqdm
+
+from utils import BoundingBox
 
 
 def get_face_embedding(
