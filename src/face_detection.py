@@ -70,7 +70,10 @@ class DetectionResultStore:
             return self._latest_result
 
 
-def create_face_detector(result_store: DetectionResultStore) -> "mp_vision.FaceDetector":  # type: ignore[reportInvalidTypeForm]
+def create_face_detector(
+    result_store: DetectionResultStore,
+    min_detection_confidence: float = 0.75,
+) -> "mp_vision.FaceDetector":  # type: ignore[reportInvalidTypeForm]
     """
     Skapar och initierar en MediaPipe FaceDetector för livestream-läge.
 
@@ -79,6 +82,12 @@ def create_face_detector(result_store: DetectionResultStore) -> "mp_vision.FaceD
     result_store : DetectionResultStore
         Container dit detektionsresultat sparas asynkront. Skapas av
         anroparen och delas med resten av pipelinen för läsning.
+    min_detection_confidence : float, default=0.75
+        Lägsta konfidensnivå (0.0–1.0) för att en detektion ska
+        rapporteras. Höjt från MediaPipes standardvärde (0.5) efter
+        manuell testning: verkligt ansikte gav 0.90–0.95, medan en
+        hudfärgad tatuering (falsk positiv) gav 0.50–0.64. 0.75 ger
+        marginal mot båda observerade intervallen.
 
     Returns
     -------
@@ -113,6 +122,7 @@ def create_face_detector(result_store: DetectionResultStore) -> "mp_vision.FaceD
     options = mp_vision.FaceDetectorOptions(
         base_options=mp_python.BaseOptions(model_asset_path=str(MODEL_PATH)),
         running_mode=mp_vision.RunningMode.LIVE_STREAM,
+        min_detection_confidence=min_detection_confidence,
         result_callback=_on_result,
     )
     return mp_vision.FaceDetector.create_from_options(options)
@@ -190,6 +200,16 @@ def run_webcam_face_detection(
                         frame,
                         (bbox.origin_x, bbox.origin_y),
                         (bbox.origin_x + bbox.width, bbox.origin_y + bbox.height),
+                        color=(0, 255, 0),
+                        thickness=2,
+                    )
+                    confidence = detection.categories[0].score
+                    cv2.putText(
+                        frame,
+                        f"{confidence:.2f}",
+                        (bbox.origin_x, bbox.origin_y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
                         color=(0, 255, 0),
                         thickness=2,
                     )
