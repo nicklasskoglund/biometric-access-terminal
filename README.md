@@ -14,12 +14,13 @@ Under aktiv utveckling. Se [Projektstruktur](#projektstruktur) nedan för vad so
 **Klart:**
 - Dataförberedelse och EDA på IMDB-WIKI-datasetet (WIKI-delen)
 - Missing-values-hantering och åldersvalidering
+- Ansiktsdetektion för live-pipelinen (MediaPipe, empiriskt tröskelvärde för att filtrera falska positiver)
 
 **Pågående:**
-- Ansiktsdetektion för live-pipelinen (MediaPipe)
+- Ansiktsembeddings
 
 **Kommande:**
-- Ansiktsembeddings, klustring, klassificeringsmodeller
+- Klustring, klassificeringsmodeller
 - Streamlit-dashboard
 
 ## Projektstruktur
