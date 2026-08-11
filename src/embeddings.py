@@ -8,6 +8,7 @@ beskurna live-frames i webcam-pipelinen.
 import numpy as np
 from deepface import DeepFace
 from utils import BoundingBox
+from tqdm import tqdm
 
 
 def get_face_embedding(
@@ -53,6 +54,51 @@ def get_face_embedding(
         raise ValueError("DeepFace returnerade ingen embedding för bilden.")
 
     return np.array(result[0]["embedding"])
+
+
+def extract_embeddings_for_dataset(
+    image_paths: list[str],
+    model_name: str = "ArcFace",
+) -> tuple[np.ndarray, list[str]]:
+    """Extraherar embeddings för en lista av bildsökvägar, med felhantering.
+
+    Loopar över samtliga bildsökvägar och extraherar en embedding per bild
+    via get_face_embedding(). Bilder som av någon anledning inte kan
+    bearbetas (korrupt fil, oläsbar bild, etc.) hoppas över och loggas,
+    snarare än att avbryta hela körningen.
+
+    Parameters
+    ----------
+    image_paths : list[str]
+        Sökvägar till redan beskurna ansiktsbilder (t.ex. wiki_crop-bilder
+        som passerat face_detected-filtreringen i preprocessing.py).
+    model_name : str, default "ArcFace"
+        Vilken förtränad DeepFace-modell som ska generera embeddingarna.
+
+    Returns
+    -------
+    tuple[np.ndarray, list[str]]
+        Ett (N, 512)-formad array med embeddings, samt en lista med
+        motsvarande bildsökvägar i samma ordning. Listan är kortare än
+        image_paths om någon bild misslyckades.
+
+    Notes
+    -----
+    Misslyckade bilder skrivs ut som varningar men avbryter inte körningen,
+    eftersom ett enskilt korrupt fall inte ska förlora resten av batchen.
+    """
+    embeddings: list[np.ndarray] = []
+    successful_paths: list[str] = []
+
+    for path in tqdm(image_paths, desc="Extraherar embeddings"):
+        try:
+            embedding = get_face_embedding(path, model_name=model_name)
+            embeddings.append(embedding)
+            successful_paths.append(path)
+        except Exception as error:
+            print(f"Varning: hoppar över {path} ({error})")
+
+    return np.array(embeddings), successful_paths
 
 
 def crop_face_with_padding(
