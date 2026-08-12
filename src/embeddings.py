@@ -12,7 +12,7 @@ import numpy as np
 from deepface import DeepFace
 from tqdm import tqdm
 
-from utils import BoundingBox
+from src.utils import BoundingBox
 
 
 def get_face_embedding(
