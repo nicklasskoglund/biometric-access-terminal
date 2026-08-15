@@ -22,7 +22,7 @@ import numpy as np
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 
-MODEL_PATH = Path("models/pretrained/face_detector/blaze_face_short_range.tflite")
+MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "pretrained" / "face_detector" / "blaze_face_short_range.tflite"
 
 
 class DetectionResultStore:
@@ -124,6 +124,43 @@ def create_face_detector(
         running_mode=mp_vision.RunningMode.LIVE_STREAM,
         min_detection_confidence=min_detection_confidence,
         result_callback=_on_result,
+    )
+    return mp_vision.FaceDetector.create_from_options(options)
+
+
+def create_face_detector_for_images(
+    min_detection_confidence: float = 0.75,
+) -> "mp_vision.FaceDetector":  # type: ignore[reportInvalidTypeForm]
+    """
+    Skapar en MediaPipe FaceDetector för synkron bearbetning av fristående
+    stillbilder (IMAGE-läge), till skillnad från create_face_detector()
+    som är konfigurerad för asynkron livestream från webcam.
+
+    Parameters
+    ----------
+    min_detection_confidence : float, default=0.75
+        Se create_face_detector() för motivering av standardvärdet.
+
+    Returns
+    -------
+    mediapipe.tasks.python.vision.FaceDetector
+        Initierad detektor. Anropas synkront via detect(), inte detect_async().
+
+    Raises
+    ------
+    FileNotFoundError
+        Om modellfilen inte hittas på MODEL_PATH.
+    """
+    if not MODEL_PATH.exists():
+        raise FileNotFoundError(
+            f"Modellfil saknas: {MODEL_PATH}. Se README.md under "
+            "'Förtränad modell för ansiktsdetektion' för nedladdningsinstruktioner."
+        )
+
+    options = mp_vision.FaceDetectorOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=str(MODEL_PATH)),
+        running_mode=mp_vision.RunningMode.IMAGE,
+        min_detection_confidence=min_detection_confidence,
     )
     return mp_vision.FaceDetector.create_from_options(options)
 
