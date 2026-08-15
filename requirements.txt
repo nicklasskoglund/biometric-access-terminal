@@ -1,5 +1,5 @@
 absl-py==2.5.0
-albumentationsx==2.4.1
+albumentations==2.0.8
 anyio==4.14.2
 argon2-cffi==25.1.0
 argon2-cffi-bindings==25.1.0
