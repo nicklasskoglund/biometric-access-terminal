@@ -1,0 +1,14 @@
+{
+  "method": "trained_neural_network",
+  "description": "Dense feedforward-nätverk ovanpå ArcFace-embeddings (build_authorization_classifier)",
+  "model_file": "authorization_classifier.keras",
+  "decision_threshold": 0.5,
+  "recall_authorized": 0.9688,
+  "precision_authorized": 0.9118,
+  "false_positive_rate": 0.0097,
+  "false_positives": "3/310",
+  "auc_roc": 0.9989,
+  "auc_pr": 0.9894,
+  "test_set_size": 342,
+  "test_set_positives": 32
+}

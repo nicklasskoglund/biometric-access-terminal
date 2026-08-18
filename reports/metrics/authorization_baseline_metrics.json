@@ -1,0 +1,13 @@
+{
+  "method": "cosine_similarity_baseline",
+  "description": "Cosine similarity mot enrollment-centroid, tröskel vald via Youden's J på valideringsmängden",
+  "threshold": 0.8916,
+  "recall_authorized": 0.375,
+  "precision_authorized": 0.48,
+  "false_positive_rate": 0.0419,
+  "false_positives": "13/310",
+  "auc_roc": 0.5184,
+  "auc_pr": 0.422,
+  "test_set_size": 342,
+  "test_set_positives": 32
+}
