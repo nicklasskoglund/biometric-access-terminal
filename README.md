@@ -9,31 +9,51 @@ supervised learning inklusive deep learning, samt utvärdering.
 
 ## Status
 
-Under aktiv utveckling. Se [Projektstruktur](#projektstruktur) nedan för vad som är klart.
+ML-pipelinen (notebook 01–06) är komplett. Se [Projektstruktur](#projektstruktur) nedan för
+en översikt av vad som är klart.
 
 **Klart:**
-- Dataförberedelse och EDA på IMDB-WIKI-datasetet (WIKI-delen)
-- Missing-values-hantering och åldersvalidering
-- Ansiktsdetektion för live-pipelinen (MediaPipe, empiriskt tröskelvärde för att filtrera falska positiver)
-
-**Pågående:**
-- Ansiktsembeddings
+- Dataförberedelse och EDA på IMDB-WIKI-datasetet (WIKI-delen), inklusive hantering av
+  saknade värden, orimliga åldrar och andra kvalitetsproblem i källdatan
+- Ansiktsembeddings via förtränad ArcFace-modell (44 312 bilder)
+- Unsupervised learning: K-means, UMAP och HDBSCAN-klustring av embeddings
+- Åtkomstklassificering (auktoriserad/ej auktoriserad): egen datainsamling, två jämförda
+  metoder (cosine similarity-baslinje och tränat neuralt nätverk)
+- Ålder- och könsestimering: delad deep learning-modell (DEX-stil åldersklassificering +
+  binär könsklassificering) ovanpå ArcFace-embeddings
+- Ansiktsdetektion för live-pipelinen (MediaPipe, empiriskt tröskelvärde för att filtrera
+  falska positiver)
+- Sammanfattande utvärdering av hela pipelinen mot kursens fem krav
 
 **Kommande:**
-- Klustring, klassificeringsmodeller
-- Streamlit-dashboard
+- Liveness detection (`src/liveness.py`)
+- Streamlit-dashboard som binder ihop live-pipelinen (webcam → detektion → embedding →
+  klassificering → liveness → HUD)
 
 ## Projektstruktur
 
 ```
 biometric-access-terminal/
 ├── data/               # Rå och bearbetad data (ej i git)
-├── notebooks/          # Utforskande analys, en per pipeline-steg
+├── notebooks/          # Utforskande analys, en per pipeline-steg (01–06)
 ├── src/                # Återanvändbar Python-kod
-├── app/                # Streamlit-dashboard
+├── app/                # Streamlit-dashboard (kommande)
 ├── models/             # Tränade och förtränade modeller (ej i git)
-└── reports/            # Slutrapport och figurer
+└── reports/
+    ├── figures/        # Genererade visualiseringar (i git)
+    └── metrics/        # Utvärderingsmått per modell, JSON (i git)
 ```
+
+**Notebooks:**
+
+| Notebook | Innehåll |
+|---|---|
+| `01_data_preparation.ipynb` | Inläsning av rå WIKI-metadata |
+| `02_eda.ipynb` | Åldersberäkning, kvalitetsflaggning, statistisk kartläggning |
+| `03_unsupervised_clustering.ipynb` | Embedding-extraktion, K-means/UMAP/HDBSCAN |
+| `04_supervised_classification.ipynb` | Åtkomstklassificering (auktoriserad/ej auktoriserad) |
+| `05_age_gender_estimation.ipynb` | Ålder- och könsestimering (delad deep learning-modell) |
+| `06_evaluation.ipynb` | Sammanfattande utvärdering av hela pipelinen |
 
 ## Setup
 
@@ -63,3 +83,16 @@ Denna fil laddas inte ner automatiskt och måste hämtas manuellt en gång:
 mkdir -p models/pretrained/face_detector
 curl -L -o models/pretrained/face_detector/blaze_face_short_range.tflite https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite
 ```
+
+### Egna auktoriserade ansiktsbilder
+
+Notebook 04 (åtkomstklassificering) kräver egna webcam-bilder som positiv klass. Dessa
+bilder är personidentifierbara och sparas i `data/raw/authorized_captures/`, som är
+gitignorad — varje användare av detta repo behöver samla in sina egna bilder via
+notebook 04, Del B, innan resten av den notebooken kan köras.
+
+### Reproducerbarhet
+
+Modellträning i notebook 04 och 05 använder `keras.utils.set_random_seed(42)` för
+deterministiska, reproducerbara resultat. Utvärderingsmått sparas till `reports/metrics/*.json`
+vid träningstillfället och läses därifrån av notebook 06, snarare än att hårdkodas.
