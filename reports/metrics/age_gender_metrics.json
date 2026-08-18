@@ -1,0 +1,19 @@
+{
+  "model_file": "age_gender_model.keras",
+  "num_age_classes": 121,
+  "age": {
+    "mae_expected_value_decoding": 11.85,
+    "rmse_expected_value_decoding": 14.38,
+    "mae_argmax_decoding": 10.89
+  },
+  "gender": {
+    "accuracy": 0.878,
+    "recall_woman": 0.6698,
+    "precision_woman": 0.8067,
+    "recall_man": 0.9469,
+    "precision_man": 0.8965,
+    "auc_roc": 0.909,
+    "average_precision": 0.9611
+  },
+  "test_set_size": 6514
+}
