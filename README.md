@@ -24,12 +24,14 @@ en översikt av vad som är klart.
 - Ansiktsdetektion för live-pipelinen (MediaPipe, empiriskt tröskelvärde för att filtrera
   falska positiver)
 - Sammanfattande utvärdering av hela pipelinen mot kursens fem krav
+- Liveness detection (`src/liveness.py`): EAR-baserad blinkdetektion via MediaPipe Face
+  Mesh, empiriskt kalibrerad och validerad mot en riktig webcam (både levande person och
+  hållet foto som spoofing-test). Blink är den avgörande signalen — ett foto kan inte
+  blinka; rörelseanalys beräknas som kompletterande diagnostik men avgör inte statusen
+  ensam, efter att empirisk testning visat att den gav för många falska avvisningar av
+  legitima, naturligt stillasittande användare
 
 **Kommande:**
-- Liveness detection (`src/liveness.py`): kärnmodulen (EAR-baserad blinkdetektion +
-  frame-diff-baserad rörelseanalys, kombinerade via `LivenessDetector`) är implementerad,
-  men trösklar (`EAR_THRESHOLD`, `MOTION_THRESHOLD`, tidsfönster) är ännu inte empiriskt
-  kalibrerade mot en riktig webcam
 - Streamlit-dashboard som binder ihop live-pipelinen (webcam → detektion → embedding →
   klassificering → liveness → HUD)
 
