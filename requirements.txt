@@ -96,7 +96,6 @@ nest-asyncio2==1.7.2
 notebook==7.6.1
 notebook_shim==0.2.4
 numpy==2.5.1
-opencv-contrib-python==5.0.0.93
 opencv-python==5.0.0.93
 opt_einsum==3.4.0
 optree==0.19.1
