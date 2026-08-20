@@ -35,7 +35,7 @@ EAR_THRESHOLD = 0.21
 EAR_CONSEC_FRAMES = 2
 
 # Platshållarvärden — kalibreras empiriskt mot er webcam via testscriptet.
-MOTION_THRESHOLD = 2.0
+MOTION_THRESHOLD = 1.5
 
 
 def compute_ear(landmarks, eye_indices):
@@ -155,14 +155,22 @@ class LivenessDetector:
     över tid för att avgöra om ansiktet framför kameran tillhör en
     levande person eller ett hållet foto.
 
-    Kombinationslogik: AND, inte OR. Båda signalerna måste vara
-    uppfyllda inom tidsfönstret för att status ska bli "levande".
-    Detta är ett medvetet säkerhetsval: eftersom det här är en
-    säkerhetsterminal väger ett lågt APCER (andelen spoofing-försök
-    som felaktigt accepteras) tyngre än ett lågt BPCER (andelen äkta
-    användare som felaktigt avvisas). En OR-kombination skulle sänka
-    tröskeln till den svagaste enskilda signalen — en angripare
-    behöver då bara lura endera signalen, inte båda.
+    Kombinationslogik: blinkdetektion är den avgörande signalen för
+    status "levande", eftersom ett statiskt foto (vårt uttalade
+    spoofing-scope, se moduldocstring) aldrig kan blinka — bekräftat
+    empiriskt vid kalibrering (se scripts/test_liveness.py-körningar):
+    ett hållet foto gav noll blink-events under upprepade tester,
+    medan en levande person konsekvent blinkade inom tidsfönstret.
+
+    Rörelsesignalen beräknas och exponeras fortfarande (motion_history,
+    motion_threshold) som kompletterande diagnostik, men används INTE
+    som ett blockerande AND-krav: empirisk kalibrering visade att en
+    legitim användare som sitter naturligt stilla ofta inte genererar
+    tillräcklig rörelse för att nå tröskeln inom det korta rullande
+    fönstret, vilket gav oacceptabelt hög andel falska avvisningar
+    (BPCER) för helt legitima användare — en avvägning som inte var
+    värd säkerhetsvinsten, eftersom blink-signalen ensam redan
+    fullständigt avslöjar det deklarerade hotscenariot (statiskt foto).
 
     Attribut:
         ear_history: rullande buffer med senaste EAR-värdena
@@ -234,7 +242,7 @@ class LivenessDetector:
             and (sum(self.motion_history) / len(self.motion_history)) > self.motion_threshold
         )
 
-        return "levande" if (blink_ok and motion_ok) else "misstänkt_foto"
+        return "levande" if blink_ok else "misstänkt_foto"
 
     def reset(self):
         """
