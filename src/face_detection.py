@@ -22,7 +22,9 @@ import numpy as np
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 
+
 MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "pretrained" / "face_detector" / "blaze_face_short_range.tflite"
+MESH_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "pretrained" / "face_mesh" / "face_landmarker.task"
 
 
 class DetectionResultStore:
@@ -163,6 +165,95 @@ def create_face_detector_for_images(
         min_detection_confidence=min_detection_confidence,
     )
     return mp_vision.FaceDetector.create_from_options(options)
+
+
+def create_face_mesh_detector(
+    num_faces: int = 1,
+) -> "mp_vision.FaceLandmarker":  # type: ignore[reportInvalidTypeForm]
+    """
+    Skapar en MediaPipe FaceLandmarker för synkron landmärkesdetektion
+    på fristående frames (IMAGE-läge).
+
+    Till skillnad från create_face_detector_for_images(), som ger en
+    grov bounding box via BlazeFace, ger FaceLandmarker 478 detaljerade
+    ansiktslandmärken per detekterat ansikte — nödvändigt underlag för
+    EAR-beräkning i liveness.py.
+
+    Parameters
+    ----------
+    num_faces : int, default=1
+        Max antal ansikten som detekteras samtidigt. 1 är tillräckligt
+        och snabbast för denna access-terminal, där endast en person
+        förväntas stå framför kameran åt gången.
+
+    Returns
+    -------
+    mediapipe.tasks.python.vision.FaceLandmarker
+        Initierad landmärkesdetektor. Anropas synkront via detect(),
+        på samma sätt som FaceDetector i IMAGE-läge.
+
+    Raises
+    ------
+    FileNotFoundError
+        Om modellfilen inte hittas på MESH_MODEL_PATH. Se README.md
+        för nedladdningsinstruktioner.
+
+    Notes
+    -----
+    Detta är en annan MediaPipe-modell (face_landmarker.task) än den
+    som används för bounding box-detektion (blaze_face_short_range.tflite)
+    och laddas ner separat.
+    """
+    if not MESH_MODEL_PATH.exists():
+        raise FileNotFoundError(
+            f"Modellfil saknas: {MESH_MODEL_PATH}. Se README.md under "
+            "'Förtränad modell för ansiktslandmärken' för nedladdningsinstruktioner."
+        )
+
+    options = mp_vision.FaceLandmarkerOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=str(MESH_MODEL_PATH)),
+        running_mode=mp_vision.RunningMode.IMAGE,
+        num_faces=num_faces,
+    )
+    return mp_vision.FaceLandmarker.create_from_options(options)
+
+
+def landmarks_to_pixel_array(
+    face_landmarks: list,
+    frame_width: int,
+    frame_height: int,
+) -> np.ndarray:
+    """
+    Konverterar MediaPipes normaliserade landmärken ([0, 1]) till
+    pixelkoordinater för en given frames dimensioner.
+
+    MediaPipe Face Mesh ger landmärkeskoordinater normaliserade separat
+    för x/y relativt bildens bredd/höjd. Om dessa används direkt i EAR-
+    beräkningen (som jämför horisontella och vertikala avstånd) skulle
+    resultatet bli skevt för icke-kvadratiska frames, eftersom x och y
+    då skalas olika. Konvertering till en gemensam pixelrymd är därför
+    ett nödvändigt steg innan landmärkena skickas till liveness.py.
+
+    Parameters
+    ----------
+    face_landmarks : list
+        Lista med normaliserade landmärkesobjekt (med .x, .y-attribut)
+        för ETT ansikte, t.ex. result.face_landmarks[0] från en
+        FaceLandmarkerResult.
+    frame_width : int
+        Framens bredd i pixlar.
+    frame_height : int
+        Framens höjd i pixlar.
+
+    Returns
+    -------
+    np.ndarray
+        Array med shape (478, 2), pixelkoordinater [x, y] per landmärke,
+        i samma ordning som indata.
+    """
+    return np.array(
+        [(lm.x * frame_width, lm.y * frame_height) for lm in face_landmarks]
+    )
 
 
 def _bgr_frame_to_mp_image(frame: np.ndarray) -> mp.Image:
