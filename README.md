@@ -24,9 +24,14 @@ en översikt av vad som är klart.
 - Ansiktsdetektion för live-pipelinen (MediaPipe, empiriskt tröskelvärde för att filtrera
   falska positiver)
 - Sammanfattande utvärdering av hela pipelinen mot kursens fem krav
+- Liveness detection (`src/liveness.py`): EAR-baserad blinkdetektion via MediaPipe Face
+  Mesh, empiriskt kalibrerad och validerad mot en riktig webcam (både levande person och
+  hållet foto som spoofing-test). Blink är den avgörande signalen — ett foto kan inte
+  blinka; rörelseanalys beräknas som kompletterande diagnostik men avgör inte statusen
+  ensam, efter att empirisk testning visat att den gav för många falska avvisningar av
+  legitima, naturligt stillasittande användare
 
 **Kommande:**
-- Liveness detection (`src/liveness.py`)
 - Streamlit-dashboard som binder ihop live-pipelinen (webcam → detektion → embedding →
   klassificering → liveness → HUD)
 
@@ -74,7 +79,7 @@ Projektet använder WIKI-delen av IMDB-WIKI-datasetet ("faces only"-versionen).
 # Källa: https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/static/wiki_crop.tar
 ```
 
-### Förtränad modell för ansiktsdetektion
+### Förtränad modell för ansiktsdetektion (BlazeFace)
 
 Live-pipelinen använder MediaPipes BlazeFace-modell (short range) för ansiktsdetektion.
 Denna fil laddas inte ner automatiskt och måste hämtas manuellt en gång:
@@ -82,6 +87,18 @@ Denna fil laddas inte ner automatiskt och måste hämtas manuellt en gång:
 ```bash
 mkdir -p models/pretrained/face_detector
 curl -L -o models/pretrained/face_detector/blaze_face_short_range.tflite https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite
+```
+
+### Förtränad modell för ansiktslandmärken (Face Mesh)
+
+Liveness detection använder MediaPipes FaceLandmarker-modell för att extrahera 478
+ansiktslandmärken (bl.a. för EAR-baserad blinkdetektion, se `src/liveness.py`). Denna fil
+laddas inte ner automatiskt och måste hämtas manuellt en gång, separat från BlazeFace-modellen
+ovan:
+
+```bash
+mkdir -p models/pretrained/face_mesh
+curl -L -o models/pretrained/face_mesh/face_landmarker.task https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
 ```
 
 ### Egna auktoriserade ansiktsbilder
