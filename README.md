@@ -26,7 +26,10 @@ en översikt av vad som är klart.
 - Sammanfattande utvärdering av hela pipelinen mot kursens fem krav
 
 **Kommande:**
-- Liveness detection (`src/liveness.py`)
+- Liveness detection (`src/liveness.py`): kärnmodulen (EAR-baserad blinkdetektion +
+  frame-diff-baserad rörelseanalys, kombinerade via `LivenessDetector`) är implementerad,
+  men trösklar (`EAR_THRESHOLD`, `MOTION_THRESHOLD`, tidsfönster) är ännu inte empiriskt
+  kalibrerade mot en riktig webcam
 - Streamlit-dashboard som binder ihop live-pipelinen (webcam → detektion → embedding →
   klassificering → liveness → HUD)
 
@@ -74,7 +77,7 @@ Projektet använder WIKI-delen av IMDB-WIKI-datasetet ("faces only"-versionen).
 # Källa: https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/static/wiki_crop.tar
 ```
 
-### Förtränad modell för ansiktsdetektion
+### Förtränad modell för ansiktsdetektion (BlazeFace)
 
 Live-pipelinen använder MediaPipes BlazeFace-modell (short range) för ansiktsdetektion.
 Denna fil laddas inte ner automatiskt och måste hämtas manuellt en gång:
@@ -82,6 +85,18 @@ Denna fil laddas inte ner automatiskt och måste hämtas manuellt en gång:
 ```bash
 mkdir -p models/pretrained/face_detector
 curl -L -o models/pretrained/face_detector/blaze_face_short_range.tflite https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite
+```
+
+### Förtränad modell för ansiktslandmärken (Face Mesh)
+
+Liveness detection använder MediaPipes FaceLandmarker-modell för att extrahera 478
+ansiktslandmärken (bl.a. för EAR-baserad blinkdetektion, se `src/liveness.py`). Denna fil
+laddas inte ner automatiskt och måste hämtas manuellt en gång, separat från BlazeFace-modellen
+ovan:
+
+```bash
+mkdir -p models/pretrained/face_mesh
+curl -L -o models/pretrained/face_mesh/face_landmarker.task https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
 ```
 
 ### Egna auktoriserade ansiktsbilder
