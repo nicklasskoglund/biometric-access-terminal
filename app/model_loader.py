@@ -8,7 +8,7 @@ för varje interaktion i UI:t.
 
 import streamlit as st
 
-from src.face_detection import create_face_detector_for_images
+from src.face_detection import create_face_detector_for_images, create_face_mesh_detector
 
 
 @st.cache_resource
@@ -21,3 +21,15 @@ def load_face_detector():
         Initierad detektor, redo att anropas synkront via detect().
     """
     return create_face_detector_for_images()
+
+
+@st.cache_resource
+def load_face_mesh_detector():
+    """Laddar och cachar MediaPipe Face Mesh-landmärkesdetektorn.
+
+    Returns
+    -------
+    mediapipe.tasks.python.vision.FaceLandmarker
+        Initierad landmärkesdetektor, redo att anropas synkront via detect().
+    """
+    return create_face_mesh_detector()
