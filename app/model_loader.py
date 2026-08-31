@@ -9,7 +9,7 @@ för varje interaktion i UI:t.
 import streamlit as st
 
 from pathlib import Path
-from tensorflow import keras
+import keras
 
 from src.face_detection import create_face_detector_for_images, create_face_mesh_detector
 
