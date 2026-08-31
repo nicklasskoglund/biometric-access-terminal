@@ -9,35 +9,96 @@ kommande commits.
 """
 
 import sys
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import cv2
 import mediapipe as mp
+import numpy as np
 import streamlit as st
 from streamlit_webrtc import webrtc_streamer
 
-from app.model_loader import load_face_detector, load_face_mesh_detector
+from app.model_loader import load_authorization_classifier, load_face_detector, load_face_mesh_detector
+from src.embeddings import crop_face_with_padding, get_face_embedding
 from src.face_detection import landmarks_to_pixel_array
 from src.liveness import LEFT_EYE_INDICES, RIGHT_EYE_INDICES
+from src.utils import BoundingBox
 
 st.title("Biometric Access Terminal")
-st.write("Steg 3: ansiktsdetektion (bounding box) + ögonlandmärken (Face Mesh) live.")
+st.write("Steg 4: ansiktsdetektion + landmärken varje frame, embedding i bakgrundstråd.")
 
 face_detector = load_face_detector()
 face_mesh_detector = load_face_mesh_detector()
+authorization_classifier = load_authorization_classifier()
 
 EYE_INDICES = LEFT_EYE_INDICES + RIGHT_EYE_INDICES
 
 
-def video_frame_callback(frame):
-    """Kör ansiktsdetektion och ögonlandmärkesdetektion på varje frame.
+class AuthorizationResultStore:
+    """Trådsäker lagring av det senaste auktoriseringsresultatet."""
 
-    Ritar ut en bounding box runt detekterat ansikte samt de 12
-    ögonlandmärken (vänster + höger öga) som liveness.py använder för
-    EAR-beräkning, som en visuell verifiering innan liveness-logiken
-    kopplas in i ett senare steg.
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._latest = {"status": "väntar på ansikte", "probability": None}
+
+    def update(self, status, probability):
+        with self._lock:
+            self._latest = {"status": status, "probability": probability}
+
+    def get(self):
+        with self._lock:
+            return self._latest.copy()
+
+
+class LatestFrameStore:
+    """Trådsäker lagring av den senaste framen och dess bounding box.
+
+    video_frame_callback skriver hit varje frame (billigt). En separat
+    bakgrundstråd läser härifrån i sin egen takt och kör den tunga
+    embedding-beräkningen, helt frikopplat från videoleveransen, så att
+    en långsam embedding-beräkning aldrig fördröjer en utgående videoframe.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._frame_id = 0
+        self._img = None
+        self._bbox = None
+
+    def update(self, img, bbox):
+        with self._lock:
+            self._frame_id += 1
+            self._img = img
+            self._bbox = bbox
+
+    def get(self):
+        with self._lock:
+            return self._frame_id, self._img, self._bbox
+
+
+@st.cache_resource
+def get_result_store():
+    return AuthorizationResultStore()
+
+
+@st.cache_resource
+def get_latest_frame_store():
+    return LatestFrameStore()
+
+
+result_store = get_result_store()
+latest_frame_store = get_latest_frame_store()
+
+
+def video_frame_callback(frame):
+    """Kör ansiktsdetektion och landmärkesdetektion, ritar overlay.
+
+    Skriver senaste frame + bounding box till latest_frame_store för
+    att den tunga embedding-beräkningen ska kunna ske i en separat
+    bakgrundstråd, utan att blockera denna callback.
 
     Parameters
     ----------
@@ -58,8 +119,10 @@ def video_frame_callback(frame):
 
     detection_result = face_detector.detect(mp_image)
 
-    for detection in detection_result.detections:
+    if detection_result.detections:
+        detection = detection_result.detections[0]
         bbox = detection.bounding_box
+
         cv2.rectangle(
             img,
             (bbox.origin_x, bbox.origin_y),
@@ -78,6 +141,16 @@ def video_frame_callback(frame):
             thickness=2,
         )
 
+        our_bbox = BoundingBox(
+            origin_x=bbox.origin_x,
+            origin_y=bbox.origin_y,
+            width=bbox.width,
+            height=bbox.height,
+        )
+        latest_frame_store.update(img.copy(), our_bbox)
+    else:
+        latest_frame_store.update(None, None)
+
     mesh_result = face_mesh_detector.detect(mp_image)
 
     if mesh_result.face_landmarks:
@@ -91,8 +164,60 @@ def video_frame_callback(frame):
     return frame.from_ndarray(img, format="bgr24")
 
 
-webrtc_streamer(
+def embedding_worker():
+    """Bakgrundstråd: kör embedding + klassificering i sin egen takt.
+
+    Läser kontinuerligt den senaste framen från latest_frame_store.
+    Bearbetar bara nya frames (spårat via frame_id) för att undvika att
+    processa samma frame flera gånger. Eftersom denna tråd är helt
+    frikopplad från video_frame_callback påverkar embeddingens
+    beräkningstid (~270-600 ms) aldrig videons framerate.
+    """
+    last_processed_id = -1
+    while True:
+        frame_id, img, bbox = latest_frame_store.get()
+
+        if img is None:
+            result_store.update("väntar på ansikte", None)
+            time.sleep(0.05)
+            continue
+
+        if frame_id == last_processed_id:
+            time.sleep(0.02)
+            continue
+
+        last_processed_id = frame_id
+        face_crop = crop_face_with_padding(img, bbox)
+
+        try:
+            start_time = time.time()
+            embedding = get_face_embedding(face_crop)
+            probability = float(
+                authorization_classifier.predict(embedding[np.newaxis, :], verbose=0)[0][0]
+            )
+            elapsed_ms = (time.time() - start_time) * 1000
+            status = "auktoriserad" if probability > 0.5 else "ej auktoriserad"
+            result_store.update(f"{status} ({elapsed_ms:.0f} ms)", probability)
+        except Exception as error:
+            result_store.update(f"fel: {error}", None)
+
+
+if "embedding_worker_started" not in st.session_state:
+    worker_thread = threading.Thread(target=embedding_worker, daemon=True)
+    worker_thread.start()
+    st.session_state.embedding_worker_started = True
+
+
+ctx = webrtc_streamer(
     key="biometric-access-terminal",
     video_frame_callback=video_frame_callback,
     media_stream_constraints={"video": True, "audio": False},
+    async_processing=True,
 )
+
+status_placeholder = st.empty()
+
+while ctx.state.playing:
+    result = result_store.get()
+    status_placeholder.write(f"**Status:** {result['status']}")
+    time.sleep(0.2)
