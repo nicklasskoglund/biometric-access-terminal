@@ -213,6 +213,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Manuella sanity-check-artefakter (genereras av scripts/test_manual_scan.py)
+test_scan_line.png
+
 # Projektspecifikt: stora data-/modellfiler
 data/raw/*
 !data/raw/.gitkeep
