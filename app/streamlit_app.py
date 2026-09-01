@@ -31,6 +31,16 @@ from src.embeddings import crop_face_with_padding, get_face_embedding
 from src.face_detection import landmarks_to_pixel_array
 from src.liveness import LEFT_EYE_INDICES, LivenessDetector, RIGHT_EYE_INDICES
 from src.utils import BoundingBox
+from app.hud_overlay import (
+    COLOR_TEAL,
+    draw_corner_brackets,
+    draw_full_screen_message,
+    draw_hud_text,
+    draw_scan_line,
+    get_denied_blink_color,
+    get_guide_frame,
+)
+from app.scan_state_machine import ScanState, ScanStateMachine
 
 st.title("Biometric Access Terminal")
 st.write("Steg 6: auktorisering + ålder/kön (bakgrundstråd) + liveness detection (varje frame).")
@@ -62,6 +72,7 @@ class AuthorizationResultStore:
             "age": None,
             "gender": None,
             "liveness": "väntar på ansikte",
+            "auth_state": "no_face",
         }
 
     def update(self, **kwargs):
@@ -114,23 +125,36 @@ def get_liveness_detector():
     return LivenessDetector()
 
 
+@st.cache_resource
+def get_scan_state_machine():
+    return ScanStateMachine()
+
+
 result_store = get_result_store()
 latest_frame_store = get_latest_frame_store()
 liveness_detector = get_liveness_detector()
+scan_state_machine = get_scan_state_machine()
 
 
 def video_frame_callback(frame):
-    """Kör ansiktsdetektion, landmärkesdetektion och liveness detection.
+    """Kör ansiktsdetektion, landmärkesdetektion, liveness detection och
+    driver HUD-scanningsflödet (ScanStateMachine).
 
-    Liveness detection (EAR-baserad blinkdetektion) körs varje frame,
-    till skillnad från embedding/klassificering, eftersom en blink bara
-    syns under några enstaka frames i en vanlig webcam-ström (~25-30 fps)
-    och därför inte tål att frames hoppas över - se LivenessDetector-
-    kalibreringen i src/liveness.py.
+    Ansiktsdetektion (BlazeFace) och landmärkesdetektion (Face Mesh) körs
+    varje frame oavsett HUD-tillstånd, eftersom liveness detection
+    (blinkdetektion) kräver en obruten sekvens av frames för att fungera
+    tillförlitligt - se LivenessDetector-kalibreringen i src/liveness.py.
 
-    Skriver senaste frame + bounding box till latest_frame_store för
-    att den tunga embedding-beräkningen ska kunna ske i en separat
-    bakgrundstråd, utan att blockera denna callback.
+    HUD:en ritas relativt en fast, centrerad guide-ram (get_guide_frame())
+    snarare än den riktiga, dynamiskt detekterade bounding boxen, för att
+    undvika det jitter som annars uppstår i hörnhakarna. Den riktiga
+    bounding boxen används fortfarande internt för ansiktsbeskärning till
+    embedding-modellen, via latest_frame_store.
+
+    ScanStateMachine har exakt en skrivare (denna callback), enligt
+    Single Writer-principen: embedding_worker skriver bara till
+    result_store, som denna callback läser för att avgöra auth_result.
+    Detta gör att ScanStateMachine slipper egen trådsäkerhet.
 
     Parameters
     ----------
@@ -140,11 +164,16 @@ def video_frame_callback(frame):
     Returns
     -------
     av.VideoFrame
-        Utgående videoframe, med bounding box och ögonlandmärken
-        inritade om ett ansikte detekterades.
+        Utgående videoframe, med HUD-overlay inritad enligt aktuellt
+        ScanState.
     """
     img = frame.to_ndarray(format="bgr24")
+    img = cv2.flip(img, 1)  # spegelvänd horisontellt - kameraströmmen
+                            # kommer ospeglad från webbläsaren, medan
+                            # användare förväntar sig en "spegel"-vy
+                            # (rörelser åt höger ska synas åt höger).
     frame_height, frame_width = img.shape[:2]
+    guide_box = get_guide_frame(frame_width, frame_height)
 
     rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_img)
@@ -152,27 +181,11 @@ def video_frame_callback(frame):
     detection_result = face_detector.detect(mp_image)
     mesh_result = face_mesh_detector.detect(mp_image)
 
-    if detection_result.detections and mesh_result.face_landmarks:
+    face_detected = bool(detection_result.detections and mesh_result.face_landmarks)
+
+    if face_detected:
         detection = detection_result.detections[0]
         bbox = detection.bounding_box
-
-        cv2.rectangle(
-            img,
-            (bbox.origin_x, bbox.origin_y),
-            (bbox.origin_x + bbox.width, bbox.origin_y + bbox.height),
-            color=(0, 255, 0),
-            thickness=2,
-        )
-        confidence = detection.categories[0].score
-        cv2.putText(
-            img,
-            f"{confidence:.2f}",
-            (bbox.origin_x, bbox.origin_y - 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            color=(0, 255, 0),
-            thickness=2,
-        )
 
         our_bbox = BoundingBox(
             origin_x=bbox.origin_x,
@@ -185,17 +198,36 @@ def video_frame_callback(frame):
         pixel_landmarks = landmarks_to_pixel_array(
             mesh_result.face_landmarks[0], frame_width, frame_height
         )
-        for idx in EYE_INDICES:
-            x, y = pixel_landmarks[idx]
-            cv2.circle(img, (int(x), int(y)), 2, color=(0, 200, 255), thickness=-1)
-
         face_bbox_tuple = (bbox.origin_x, bbox.origin_y, bbox.width, bbox.height)
         liveness_status = liveness_detector.update(img, pixel_landmarks, face_bbox_tuple)
         result_store.update(liveness=liveness_status)
     else:
         latest_frame_store.update(None, None)
         liveness_detector.reset()
+        liveness_status = "osäker_ännu"
         result_store.update(liveness="väntar på ansikte")
+
+    current_auth_state = result_store.get().get("auth_state")
+    auth_result = {"authorized": "authorized", "unauthorized": "unauthorized"}.get(current_auth_state)
+
+    scan_state_machine.update(
+        face_detected=face_detected,
+        liveness_status=liveness_status,
+        auth_result=auth_result,
+    )
+    state = scan_state_machine.state
+
+    if state in (ScanState.IDLE, ScanState.STABILIZING, ScanState.SCANNING):
+        img = draw_corner_brackets(img, guide_box, color=COLOR_TEAL, glow=False)
+        if state == ScanState.SCANNING:
+            img = draw_scan_line(img, guide_box, color=COLOR_TEAL)
+        img = draw_hud_text(img, scan_state_machine.display_text(), guide_box, color=COLOR_TEAL)
+    elif state == ScanState.RESULT_GRANTED:
+        img = draw_full_screen_message(img, "ACCESS GRANTED", color=COLOR_TEAL)
+    elif state == ScanState.RESULT_DENIED:
+        img = draw_full_screen_message(img, "ACCESS DENIED", color=get_denied_blink_color())
+    elif state == ScanState.WELCOME:
+        img = draw_full_screen_message(img, "WELCOME", color=COLOR_TEAL)
 
     return frame.from_ndarray(img, format="bgr24")
 
@@ -221,7 +253,9 @@ def embedding_worker():
         frame_id, img, bbox = latest_frame_store.get()
 
         if img is None:
-            result_store.update(status="väntar på ansikte", probability=None, age=None, gender=None)
+            result_store.update(
+                status="väntar på ansikte", probability=None, age=None, gender=None, auth_state="no_face"
+            )
             time.sleep(0.05)
             continue
 
@@ -241,6 +275,7 @@ def embedding_worker():
                 authorization_classifier.predict(embedding_batch, verbose=0)[0][0]
             )
             auth_status = "auktoriserad" if auth_probability > 0.5 else "ej auktoriserad"
+            auth_state = "authorized" if auth_probability > 0.5 else "unauthorized"
 
             age_probs, gender_prob = age_gender_model.predict(embedding_batch, verbose=0)
             estimated_age = float(np.sum(age_probs[0] * age_class_indices))
@@ -252,9 +287,20 @@ def embedding_worker():
                 probability=auth_probability,
                 age=estimated_age,
                 gender=estimated_gender,
+                auth_state=auth_state,
             )
         except Exception as error:
-            result_store.update(status=f"fel: {error}", probability=None, age=None, gender=None)
+            result_store.update(
+                status=f"fel: {error}", probability=None, age=None, gender=None, auth_state="error"
+            )
+
+        # Medveten paus mellan klassificeringar. Ingen funktionell anledning
+        # att köra så tätt som möjligt - MIN_SCAN_DURATION garanterar redan
+        # minst 2 sekunders scanning oavsett hur snabbt resultatet blir
+        # klart. Minskar allokeringstakten (färre numpy-temporärer per
+        # sekund), vilket sannolikt minskar frekvensen av Pythons GC-pauser
+        # och därmed störningar på aiortc:s asynkrona händelseloop.
+        time.sleep(0.3)
 
 
 if "embedding_worker_started" not in st.session_state:
@@ -270,17 +316,37 @@ ctx = webrtc_streamer(
     async_processing=True,
 )
 
-status_placeholder = st.empty()
+@st.fragment(run_every=1.0)
+def render_status_panel():
+    """Renderar statusrad och (villkorlig) reset-knapp.
 
-while ctx.state.playing:
+    Körs som en Streamlit-fragment snarare än en blockerande while-loop:
+    en fragment kan köras om både periodiskt (run_every) och vid
+    användarinteraktion (knapptryck) utan att blockera resten av sidan.
+    En vanlig while-loop med time.sleep() blockerar Streamlits
+    körningsmotor helt, vilket gör att knapptryck aldrig hinner
+    registreras - det var grundorsaken till att "Scanna igen"-knappen
+    varken syntes eller fungerade i tidigare version.
+
+    scan_state_machine.force_reset() anropas härifrån (huvudtråden vid
+    knapptryck), som ett medvetet undantag från att video_frame_callback
+    annars är ensam skrivare - se force_reset()-docstring i
+    scan_state_machine.py.
+    """
+    state = scan_state_machine.state
+
+    if state in (ScanState.WELCOME, ScanState.RESULT_DENIED):
+        if st.button("Scanna igen", key="reset_scan_button"):
+            scan_state_machine.force_reset()
+
     result = result_store.get()
     if result["age"] is not None:
-        status_placeholder.write(
+        st.write(
             f"**Status:** {result['status']} | **Ålder:** {result['age']:.0f} år | "
             f"**Kön:** {result['gender']} | **Liveness:** {result['liveness']}"
         )
     else:
-        status_placeholder.write(
-            f"**Status:** {result['status']} | **Liveness:** {result['liveness']}"
-        )
-    time.sleep(0.2)
+        st.write(f"**Status:** {result['status']} | **Liveness:** {result['liveness']}")
+
+
+render_status_panel()
