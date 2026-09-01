@@ -21,32 +21,49 @@ import numpy as np
 import streamlit as st
 from streamlit_webrtc import webrtc_streamer
 
-from app.model_loader import load_authorization_classifier, load_face_detector, load_face_mesh_detector
+from app.model_loader import (
+    load_age_gender_model,
+    load_authorization_classifier,
+    load_face_detector,
+    load_face_mesh_detector,
+)
 from src.embeddings import crop_face_with_padding, get_face_embedding
 from src.face_detection import landmarks_to_pixel_array
 from src.liveness import LEFT_EYE_INDICES, RIGHT_EYE_INDICES
 from src.utils import BoundingBox
 
 st.title("Biometric Access Terminal")
-st.write("Steg 4: ansiktsdetektion + landmärken varje frame, embedding i bakgrundstråd.")
+st.write("Steg 5: auktoriseringsklassificering + ålder/kön-estimering i bakgrundstråd.")
 
 face_detector = load_face_detector()
 face_mesh_detector = load_face_mesh_detector()
 authorization_classifier = load_authorization_classifier()
+age_gender_model = load_age_gender_model()
 
 EYE_INDICES = LEFT_EYE_INDICES + RIGHT_EYE_INDICES
+NUM_AGE_CLASSES = 121
 
 
 class AuthorizationResultStore:
-    """Trådsäker lagring av det senaste auktoriseringsresultatet."""
+    """Trådsäker lagring av det senaste auktoriserings- och ålder/kön-resultatet."""
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._latest = {"status": "väntar på ansikte", "probability": None}
+        self._latest = {
+            "status": "väntar på ansikte",
+            "probability": None,
+            "age": None,
+            "gender": None,
+        }
 
-    def update(self, status, probability):
+    def update(self, status, probability, age=None, gender=None):
         with self._lock:
-            self._latest = {"status": status, "probability": probability}
+            self._latest = {
+                "status": status,
+                "probability": probability,
+                "age": age,
+                "gender": gender,
+            }
 
     def get(self):
         with self._lock:
@@ -165,15 +182,22 @@ def video_frame_callback(frame):
 
 
 def embedding_worker():
-    """Bakgrundstråd: kör embedding + klassificering i sin egen takt.
+    """Bakgrundstråd: kör embedding, auktoriseringsklassificering och
+    ålder/kön-estimering i sin egen takt.
 
     Läser kontinuerligt den senaste framen från latest_frame_store.
     Bearbetar bara nya frames (spårat via frame_id) för att undvika att
     processa samma frame flera gånger. Eftersom denna tråd är helt
-    frikopplad från video_frame_callback påverkar embeddingens
-    beräkningstid (~270-600 ms) aldrig videons framerate.
+    frikopplad från video_frame_callback påverkar den tunga
+    beräkningstiden aldrig videons framerate.
+
+    Åldern beräknas som softmax-outputens förväntade värde över de 121
+    åldersklasserna (DEX-metoden), inte enbart argmax, enligt
+    build_age_gender_model()-dokumentationen i src/models.py.
     """
     last_processed_id = -1
+    age_class_indices = np.arange(NUM_AGE_CLASSES)
+
     while True:
         frame_id, img, bbox = latest_frame_store.get()
 
@@ -192,12 +216,24 @@ def embedding_worker():
         try:
             start_time = time.time()
             embedding = get_face_embedding(face_crop)
-            probability = float(
-                authorization_classifier.predict(embedding[np.newaxis, :], verbose=0)[0][0]
+            embedding_batch = embedding[np.newaxis, :]
+
+            auth_probability = float(
+                authorization_classifier.predict(embedding_batch, verbose=0)[0][0]
             )
+            auth_status = "auktoriserad" if auth_probability > 0.5 else "ej auktoriserad"
+
+            age_probs, gender_prob = age_gender_model.predict(embedding_batch, verbose=0)
+            estimated_age = float(np.sum(age_probs[0] * age_class_indices))
+            estimated_gender = "man" if gender_prob[0][0] > 0.5 else "kvinna"
+
             elapsed_ms = (time.time() - start_time) * 1000
-            status = "auktoriserad" if probability > 0.5 else "ej auktoriserad"
-            result_store.update(f"{status} ({elapsed_ms:.0f} ms)", probability)
+            result_store.update(
+                f"{auth_status} ({elapsed_ms:.0f} ms)",
+                auth_probability,
+                age=estimated_age,
+                gender=estimated_gender,
+            )
         except Exception as error:
             result_store.update(f"fel: {error}", None)
 
@@ -219,5 +255,11 @@ status_placeholder = st.empty()
 
 while ctx.state.playing:
     result = result_store.get()
-    status_placeholder.write(f"**Status:** {result['status']}")
+    if result["age"] is not None:
+        status_placeholder.write(
+            f"**Status:** {result['status']} | **Ålder:** {result['age']:.0f} år | "
+            f"**Kön:** {result['gender']}"
+        )
+    else:
+        status_placeholder.write(f"**Status:** {result['status']}")
     time.sleep(0.2)
