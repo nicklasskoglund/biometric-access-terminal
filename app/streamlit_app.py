@@ -294,6 +294,14 @@ def embedding_worker():
                 status=f"fel: {error}", probability=None, age=None, gender=None, auth_state="error"
             )
 
+        # Medveten paus mellan klassificeringar. Ingen funktionell anledning
+        # att köra så tätt som möjligt - MIN_SCAN_DURATION garanterar redan
+        # minst 2 sekunders scanning oavsett hur snabbt resultatet blir
+        # klart. Minskar allokeringstakten (färre numpy-temporärer per
+        # sekund), vilket sannolikt minskar frekvensen av Pythons GC-pauser
+        # och därmed störningar på aiortc:s asynkrona händelseloop.
+        time.sleep(0.3)
+
 
 if "embedding_worker_started" not in st.session_state:
     worker_thread = threading.Thread(target=embedding_worker, daemon=True)
@@ -308,17 +316,37 @@ ctx = webrtc_streamer(
     async_processing=True,
 )
 
-status_placeholder = st.empty()
+@st.fragment(run_every=1.0)
+def render_status_panel():
+    """Renderar statusrad och (villkorlig) reset-knapp.
 
-while ctx.state.playing:
+    Körs som en Streamlit-fragment snarare än en blockerande while-loop:
+    en fragment kan köras om både periodiskt (run_every) och vid
+    användarinteraktion (knapptryck) utan att blockera resten av sidan.
+    En vanlig while-loop med time.sleep() blockerar Streamlits
+    körningsmotor helt, vilket gör att knapptryck aldrig hinner
+    registreras - det var grundorsaken till att "Scanna igen"-knappen
+    varken syntes eller fungerade i tidigare version.
+
+    scan_state_machine.force_reset() anropas härifrån (huvudtråden vid
+    knapptryck), som ett medvetet undantag från att video_frame_callback
+    annars är ensam skrivare - se force_reset()-docstring i
+    scan_state_machine.py.
+    """
+    state = scan_state_machine.state
+
+    if state in (ScanState.WELCOME, ScanState.RESULT_DENIED):
+        if st.button("Scanna igen", key="reset_scan_button"):
+            scan_state_machine.force_reset()
+
     result = result_store.get()
     if result["age"] is not None:
-        status_placeholder.write(
+        st.write(
             f"**Status:** {result['status']} | **Ålder:** {result['age']:.0f} år | "
             f"**Kön:** {result['gender']} | **Liveness:** {result['liveness']}"
         )
     else:
-        status_placeholder.write(
-            f"**Status:** {result['status']} | **Liveness:** {result['liveness']}"
-        )
-    time.sleep(0.2)
+        st.write(f"**Status:** {result['status']} | **Liveness:** {result['liveness']}")
+
+
+render_status_panel()
