@@ -168,6 +168,10 @@ def video_frame_callback(frame):
         ScanState.
     """
     img = frame.to_ndarray(format="bgr24")
+    img = cv2.flip(img, 1)  # spegelvänd horisontellt - kameraströmmen
+                            # kommer ospeglad från webbläsaren, medan
+                            # användare förväntar sig en "spegel"-vy
+                            # (rörelser åt höger ska synas åt höger).
     frame_height, frame_width = img.shape[:2]
     guide_box = get_guide_frame(frame_width, frame_height)
 
