@@ -15,6 +15,7 @@ import pytest
 from app.scan_state_machine import (
     DENIED_DISPLAY_DURATION,
     GRANTED_DISPLAY_DURATION,
+    MIN_SCAN_DURATION,
     SCAN_TIMEOUT,
     STABILIZE_DURATION,
     ScanState,
@@ -97,14 +98,26 @@ class TestScanning:
         machine = ScanStateMachine()
         _advance_to_stabilized(machine, fake_clock)
 
+        fake_clock.advance(MIN_SCAN_DURATION + 0.1)
         machine.update(face_detected=True, liveness_status="levande", auth_result="authorized")
 
         assert machine.state == ScanState.RESULT_GRANTED
+
+    def test_does_not_grant_before_min_scan_duration_even_if_ready(self, fake_clock):
+        machine = ScanStateMachine()
+        _advance_to_stabilized(machine, fake_clock)
+
+        # Liveness + auktorisering klara direkt, men MIN_SCAN_DURATION har
+        # inte passerat än - scanning-animationen ska hinna synas.
+        machine.update(face_detected=True, liveness_status="levande", auth_result="authorized")
+
+        assert machine.state == ScanState.SCANNING
 
     def test_transitions_to_denied_when_alive_and_unauthorized(self, fake_clock):
         machine = ScanStateMachine()
         _advance_to_stabilized(machine, fake_clock)
 
+        fake_clock.advance(MIN_SCAN_DURATION + 0.1)
         machine.update(face_detected=True, liveness_status="levande", auth_result="unauthorized")
 
         assert machine.state == ScanState.RESULT_DENIED
@@ -141,6 +154,7 @@ class TestResultDisplayAndReset:
     def test_granted_transitions_to_welcome_after_display_duration(self, fake_clock):
         machine = ScanStateMachine()
         _advance_to_stabilized(machine, fake_clock)
+        fake_clock.advance(MIN_SCAN_DURATION + 0.1)
         machine.update(face_detected=True, liveness_status="levande", auth_result="authorized")
 
         fake_clock.advance(GRANTED_DISPLAY_DURATION + 0.1)
@@ -151,6 +165,7 @@ class TestResultDisplayAndReset:
     def test_welcome_state_persists(self, fake_clock):
         machine = ScanStateMachine()
         _advance_to_stabilized(machine, fake_clock)
+        fake_clock.advance(MIN_SCAN_DURATION + 0.1)
         machine.update(face_detected=True, liveness_status="levande", auth_result="authorized")
         fake_clock.advance(GRANTED_DISPLAY_DURATION + 0.1)
         machine.update(face_detected=True, liveness_status="levande", auth_result="authorized")
@@ -163,6 +178,7 @@ class TestResultDisplayAndReset:
     def test_denied_transitions_to_idle_after_display_duration(self, fake_clock):
         machine = ScanStateMachine()
         _advance_to_stabilized(machine, fake_clock)
+        fake_clock.advance(MIN_SCAN_DURATION + 0.1)
         machine.update(face_detected=True, liveness_status="levande", auth_result="unauthorized")
 
         fake_clock.advance(DENIED_DISPLAY_DURATION + 0.1)
@@ -184,11 +200,13 @@ class TestDisplayText:
     def test_granted_shows_access_granted(self, fake_clock):
         machine = ScanStateMachine()
         _advance_to_stabilized(machine, fake_clock)
+        fake_clock.advance(MIN_SCAN_DURATION + 0.1)
         machine.update(face_detected=True, liveness_status="levande", auth_result="authorized")
         assert machine.display_text() == "ACCESS GRANTED"
 
     def test_denied_shows_access_denied(self, fake_clock):
         machine = ScanStateMachine()
         _advance_to_stabilized(machine, fake_clock)
+        fake_clock.advance(MIN_SCAN_DURATION + 0.1)
         machine.update(face_detected=True, liveness_status="levande", auth_result="unauthorized")
         assert machine.display_text() == "ACCESS DENIED"

@@ -20,6 +20,10 @@ class ScanState(Enum):
 
 # Tidsparametrar (sekunder)
 STABILIZE_DURATION = 0.5
+MIN_SCAN_DURATION = 2.0  # matchar SCAN_PERIOD_SECONDS i hud_overlay.py, så
+                         # scanning-linjen hinner göra minst ett helt svep
+                         # innan resultatet visas, oavsett hur snabbt
+                         # liveness/auktorisering faktiskt blir klara.
 SCAN_TIMEOUT = 4.0
 GRANTED_DISPLAY_DURATION = 1.5
 DENIED_DISPLAY_DURATION = 3.0
@@ -77,6 +81,10 @@ class ScanStateMachine:
         elif self._state == ScanState.SCANNING:
             if not face_detected:
                 self._transition_to(ScanState.IDLE)
+            elif self._time_in_state() < MIN_SCAN_DURATION:
+                # Medveten "teater": ge scanning-animationen tid att synas
+                # även om liveness/auktorisering redan är klara.
+                pass
             elif liveness_status == "levande" and auth_result == "authorized":
                 self._transition_to(ScanState.RESULT_GRANTED)
             elif liveness_status == "levande" and auth_result == "unauthorized":
@@ -97,6 +105,18 @@ class ScanStateMachine:
 
         elif self._state == ScanState.WELCOME:
             pass  # Stannar kvar tills vidare, ingen auto-återgång än.
+
+    def force_reset(self):
+        """
+        Manuell återställning till IDLE, oavsett aktuellt tillstånd.
+
+        Avsedd för en explicit "Scanna igen"-knapp i UI:t, som ett
+        undantag från att video_frame_callback annars är den enda
+        skrivaren till detta objekt (Single Writer-principen). Ett
+        enstaka knapptryck från huvudtråden är en försumbar risk för
+        race conditions jämfört med kontinuerlig samtidig skrivning.
+        """
+        self._transition_to(ScanState.IDLE)
 
     def display_text(self) -> str:
         """Text att visa i HUD:en för det aktuella tillståndet."""
