@@ -18,21 +18,20 @@ import cv2
 import numpy as np
 
 from app.hud_overlay import (
+    COLOR_TEAL,
     draw_scan_line,
     draw_corner_brackets,
     draw_hud_text,
     draw_full_screen_message,
     get_guide_frame,
-    get_status_visuals,
 )
 
 frame = np.zeros((480, 640, 3), dtype=np.uint8)
 guide_box = get_guide_frame(640, 480)
 
-color, glow = get_status_visuals("scanning")
-frame = draw_scan_line(frame, guide_box, color=color)
-frame = draw_corner_brackets(frame, guide_box, color=color, glow=glow)
-frame = draw_hud_text(frame, "Hold still and blink", guide_box, color=color)
+frame = draw_scan_line(frame, guide_box, color=COLOR_TEAL)
+frame = draw_corner_brackets(frame, guide_box, color=COLOR_TEAL, glow=False)
+frame = draw_hud_text(frame, "Hold still and blink", guide_box, color=COLOR_TEAL)
 
 output_path = project_root / "test_scan_line.png"
 cv2.imwrite(str(output_path), frame)

@@ -2,6 +2,12 @@
 HUD-overlay: sci-fi-inspirerade ritfunktioner som appliceras direkt på
 videoframes i video_frame_callback. Alla funktioner är avsedda att vara
 billiga per frame (endast OpenCV-primitiver, inga tunga beräkningar).
+
+Innehåller ritfunktioner för scanning-linje, hörnhakar och en fast,
+centrerad guide-ram (get_guide_frame()) som användaren positionerar sitt
+ansikte inom, samt textrendering (draw_hud_text()) och helskärms-
+resultatmeddelanden (draw_full_screen_message(), get_denied_blink_color())
+för ACCESS GRANTED/DENIED/WELCOME.
 """
 
 import time
@@ -14,50 +20,6 @@ COLOR_RED = (87, 71, 255)       # #FF4757 i BGR
 COLOR_NAVY = (32, 18, 11)       # #0B1220 i BGR
 
 SCAN_PERIOD_SECONDS = 2.0  # tid för en fullständig scanning-cykel (topp till botten)
-
-
-def get_status_color(auth_status: str) -> tuple[int, int, int]:
-    """
-    Mappar auktoriseringsstatus till en BGR-färg, delad av scanning-linjen
-    och hörnhakarna för en sammanhållen "target lock"-känsla.
-
-    Args:
-        auth_status: t.ex. "scanning", "authorized", "unauthorized",
-            eller "liveness_failed".
-
-    Returns:
-        BGR-färgtuple.
-    """
-    if auth_status == "authorized":
-        return COLOR_TEAL
-    elif auth_status in ("unauthorized", "liveness_failed"):
-        return COLOR_RED
-    else:
-        # "scanning" / okänt / väntar på ansikte
-        return COLOR_TEAL
-    
-    
-def get_status_visuals(auth_status: str) -> tuple[tuple[int, int, int], bool]:
-    """
-    Mappar auktoriseringsstatus till (färg, glow) för scanning-linjen och
-    hörnhakarna, för en sammanhållen "target lock"-känsla.
-
-    Args:
-        auth_status: t.ex. "no_face", "scanning", "authorized",
-            "unauthorized", eller "liveness_failed".
-
-    Returns:
-        Tuple av (BGR-färg, om glow ska ritas).
-    """
-    if auth_status == "authorized":
-        return COLOR_TEAL, True
-    elif auth_status in ("unauthorized", "liveness_failed"):
-        return COLOR_RED, True
-    elif auth_status == "error":
-        return COLOR_RED, False
-    else:
-        # "scanning" / "no_face" / okänt — skarpa linjer, ingen glöd
-        return COLOR_TEAL, False
 
 
 def draw_scan_line(frame: np.ndarray, face_box: tuple[int, int, int, int], color: tuple[int, int, int] = COLOR_TEAL) -> np.ndarray:
