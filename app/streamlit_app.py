@@ -29,11 +29,11 @@ from app.model_loader import (
 )
 from src.embeddings import crop_face_with_padding, get_face_embedding
 from src.face_detection import landmarks_to_pixel_array
-from src.liveness import LEFT_EYE_INDICES, RIGHT_EYE_INDICES
+from src.liveness import LEFT_EYE_INDICES, LivenessDetector, RIGHT_EYE_INDICES
 from src.utils import BoundingBox
 
 st.title("Biometric Access Terminal")
-st.write("Steg 5: auktoriseringsklassificering + ålder/kön-estimering i bakgrundstråd.")
+st.write("Steg 6: auktorisering + ålder/kön (bakgrundstråd) + liveness detection (varje frame).")
 
 face_detector = load_face_detector()
 face_mesh_detector = load_face_mesh_detector()
@@ -45,7 +45,14 @@ NUM_AGE_CLASSES = 121
 
 
 class AuthorizationResultStore:
-    """Trådsäker lagring av det senaste auktoriserings- och ålder/kön-resultatet."""
+    """Trådsäker, mergande lagring av senaste resultat.
+
+    Flera trådar skriver till denna store samtidigt: video_frame_callback
+    uppdaterar liveness-status varje frame, medan embedding_worker
+    uppdaterar auktorisering/ålder/kön i sin egen takt. update() mergar
+    därför bara in de nyckelord som anges, istället för att skriva över
+    hela resultatet, så att de olika trådarna inte raderar varandras fält.
+    """
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -54,16 +61,12 @@ class AuthorizationResultStore:
             "probability": None,
             "age": None,
             "gender": None,
+            "liveness": "väntar på ansikte",
         }
 
-    def update(self, status, probability, age=None, gender=None):
+    def update(self, **kwargs):
         with self._lock:
-            self._latest = {
-                "status": status,
-                "probability": probability,
-                "age": age,
-                "gender": gender,
-            }
+            self._latest.update(kwargs)
 
     def get(self):
         with self._lock:
@@ -106,12 +109,24 @@ def get_latest_frame_store():
     return LatestFrameStore()
 
 
+@st.cache_resource
+def get_liveness_detector():
+    return LivenessDetector()
+
+
 result_store = get_result_store()
 latest_frame_store = get_latest_frame_store()
+liveness_detector = get_liveness_detector()
 
 
 def video_frame_callback(frame):
-    """Kör ansiktsdetektion och landmärkesdetektion, ritar overlay.
+    """Kör ansiktsdetektion, landmärkesdetektion och liveness detection.
+
+    Liveness detection (EAR-baserad blinkdetektion) körs varje frame,
+    till skillnad från embedding/klassificering, eftersom en blink bara
+    syns under några enstaka frames i en vanlig webcam-ström (~25-30 fps)
+    och därför inte tål att frames hoppas över - se LivenessDetector-
+    kalibreringen i src/liveness.py.
 
     Skriver senaste frame + bounding box till latest_frame_store för
     att den tunga embedding-beräkningen ska kunna ske i en separat
@@ -135,8 +150,9 @@ def video_frame_callback(frame):
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_img)
 
     detection_result = face_detector.detect(mp_image)
+    mesh_result = face_mesh_detector.detect(mp_image)
 
-    if detection_result.detections:
+    if detection_result.detections and mesh_result.face_landmarks:
         detection = detection_result.detections[0]
         bbox = detection.bounding_box
 
@@ -165,18 +181,21 @@ def video_frame_callback(frame):
             height=bbox.height,
         )
         latest_frame_store.update(img.copy(), our_bbox)
-    else:
-        latest_frame_store.update(None, None)
 
-    mesh_result = face_mesh_detector.detect(mp_image)
-
-    if mesh_result.face_landmarks:
         pixel_landmarks = landmarks_to_pixel_array(
             mesh_result.face_landmarks[0], frame_width, frame_height
         )
         for idx in EYE_INDICES:
             x, y = pixel_landmarks[idx]
             cv2.circle(img, (int(x), int(y)), 2, color=(0, 200, 255), thickness=-1)
+
+        face_bbox_tuple = (bbox.origin_x, bbox.origin_y, bbox.width, bbox.height)
+        liveness_status = liveness_detector.update(img, pixel_landmarks, face_bbox_tuple)
+        result_store.update(liveness=liveness_status)
+    else:
+        latest_frame_store.update(None, None)
+        liveness_detector.reset()
+        result_store.update(liveness="väntar på ansikte")
 
     return frame.from_ndarray(img, format="bgr24")
 
@@ -202,7 +221,7 @@ def embedding_worker():
         frame_id, img, bbox = latest_frame_store.get()
 
         if img is None:
-            result_store.update("väntar på ansikte", None)
+            result_store.update(status="väntar på ansikte", probability=None, age=None, gender=None)
             time.sleep(0.05)
             continue
 
@@ -229,13 +248,13 @@ def embedding_worker():
 
             elapsed_ms = (time.time() - start_time) * 1000
             result_store.update(
-                f"{auth_status} ({elapsed_ms:.0f} ms)",
-                auth_probability,
+                status=f"{auth_status} ({elapsed_ms:.0f} ms)",
+                probability=auth_probability,
                 age=estimated_age,
                 gender=estimated_gender,
             )
         except Exception as error:
-            result_store.update(f"fel: {error}", None)
+            result_store.update(status=f"fel: {error}", probability=None, age=None, gender=None)
 
 
 if "embedding_worker_started" not in st.session_state:
@@ -258,8 +277,10 @@ while ctx.state.playing:
     if result["age"] is not None:
         status_placeholder.write(
             f"**Status:** {result['status']} | **Ålder:** {result['age']:.0f} år | "
-            f"**Kön:** {result['gender']}"
+            f"**Kön:** {result['gender']} | **Liveness:** {result['liveness']}"
         )
     else:
-        status_placeholder.write(f"**Status:** {result['status']}")
+        status_placeholder.write(
+            f"**Status:** {result['status']} | **Liveness:** {result['liveness']}"
+        )
     time.sleep(0.2)
