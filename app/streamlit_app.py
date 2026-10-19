@@ -3,9 +3,9 @@
 Sci-fi-styrd AI-säkerhetsterminal som scannar ansiktet live via webcam,
 verifierar auktorisation, estimerar ålder/kön och kör liveness detection.
 
-Detta är den körbara Streamlit-entrypointen. Pipeline-logik (ansikts-
-detektion, embedding, klassificering, liveness) kopplas in stegvis i
-kommande commits.
+Detta är den körbara Streamlit-entrypointen. Återanvändbar pipeline-logik
+(ansiktsdetektion, embedding, liveness) ligger i src/, medan HUD-rendering
+och scanningsflödets tillståndsmaskin ligger i app/.
 """
 
 import sys
@@ -43,7 +43,6 @@ from app.hud_overlay import (
 from app.scan_state_machine import ScanState, ScanStateMachine
 
 st.title("Biometric Access Terminal")
-st.write("Steg 6: auktorisering + ålder/kön (bakgrundstråd) + liveness detection (varje frame).")
 
 face_detector = load_face_detector()
 face_mesh_detector = load_face_mesh_detector()
