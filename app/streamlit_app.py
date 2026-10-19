@@ -52,6 +52,11 @@ age_gender_model = load_age_gender_model()
 
 EYE_INDICES = LEFT_EYE_INDICES + RIGHT_EYE_INDICES
 NUM_AGE_CLASSES = 121
+# Hur länge embedding_worker väntar på en ny frame innan den antar att
+# webrtc-strömmen har upphört (t.ex. stängd flik, där ingen rerun sker
+# som kan sätta stoppsignalen) och avslutar sig själv. video_frame_callback
+# skriver till latest_frame_store varje frame, även utan ansikte.
+STREAM_TIMEOUT_SECONDS = 10.0
 
 
 class AuthorizationResultStore:
@@ -110,30 +115,25 @@ class LatestFrameStore:
             return self._frame_id, self._img, self._bbox
 
 
-@st.cache_resource
-def get_result_store():
-    return AuthorizationResultStore()
+# Scanningstillståndet (frames, resultat, liveness-historik, HUD-tillstånd)
+# lagras per session i st.session_state, inte via @st.cache_resource.
+# cache_resource delas mellan alla sessioner i processen, vilket skulle
+# låta besökare B:s embedding_worker bearbeta besökare A:s frames och visa
+# A:s ålder/kön/auktorisering för B. Modellerna ovan delas däremot avsiktligt,
+# eftersom de är tillståndslösa.
+if "result_store" not in st.session_state:
+    st.session_state.result_store = AuthorizationResultStore()
+    st.session_state.latest_frame_store = LatestFrameStore()
+    st.session_state.liveness_detector = LivenessDetector()
+    st.session_state.scan_state_machine = ScanStateMachine()
 
-
-@st.cache_resource
-def get_latest_frame_store():
-    return LatestFrameStore()
-
-
-@st.cache_resource
-def get_liveness_detector():
-    return LivenessDetector()
-
-
-@st.cache_resource
-def get_scan_state_machine():
-    return ScanStateMachine()
-
-
-result_store = get_result_store()
-latest_frame_store = get_latest_frame_store()
-liveness_detector = get_liveness_detector()
-scan_state_machine = get_scan_state_machine()
+# video_frame_callback körs i en webrtc-tråd utan åtkomst till
+# st.session_state, men läser dessa globals från sin egen sessions
+# script-körning (Streamlit kör varje rerun i en egen modulnamnrymd).
+result_store = st.session_state.result_store
+latest_frame_store = st.session_state.latest_frame_store
+liveness_detector = st.session_state.liveness_detector
+scan_state_machine = st.session_state.scan_state_machine
 
 
 def video_frame_callback(frame):
@@ -232,7 +232,7 @@ def video_frame_callback(frame):
     return frame.from_ndarray(img, format="bgr24")
 
 
-def embedding_worker():
+def embedding_worker(latest_frame_store, result_store, stop_event):
     """Bakgrundstråd: kör embedding, auktoriseringsklassificering och
     ålder/kön-estimering i sin egen takt.
 
@@ -245,22 +245,44 @@ def embedding_worker():
     Åldern beräknas som softmax-outputens förväntade värde över de 121
     åldersklasserna (DEX-metoden), inte enbart argmax, enligt
     build_age_gender_model()-dokumentationen i src/models.py.
+
+    Tråden avslutas när stop_event sätts (användaren stoppade strömmen),
+    eller när ingen ny frame kommit på STREAM_TIMEOUT_SECONDS (strömmen
+    har upphört utan rerun, t.ex. stängd flik). Utan detta skulle varje
+    avslutad session lämna kvar en tråd som håller sin sista frame i minnet.
+
+    Parameters
+    ----------
+    latest_frame_store : LatestFrameStore
+        Sessionens frame-store, som video_frame_callback skriver till.
+    result_store : AuthorizationResultStore
+        Sessionens resultat-store, som denna tråd skriver till.
+    stop_event : threading.Event
+        Stoppsignal, sätts av sync_embedding_worker().
     """
     last_processed_id = -1
+    last_seen_id = -1
+    last_seen_time = time.monotonic()
     age_class_indices = np.arange(NUM_AGE_CLASSES)
 
-    while True:
+    while not stop_event.is_set():
         frame_id, img, bbox = latest_frame_store.get()
+
+        now = time.monotonic()
+        if frame_id != last_seen_id:
+            last_seen_id, last_seen_time = frame_id, now
+        elif now - last_seen_time > STREAM_TIMEOUT_SECONDS:
+            break
 
         if img is None:
             result_store.update(
                 status="väntar på ansikte", probability=None, age=None, gender=None, auth_state="no_face"
             )
-            time.sleep(0.05)
+            stop_event.wait(0.05)
             continue
 
         if frame_id == last_processed_id:
-            time.sleep(0.02)
+            stop_event.wait(0.02)
             continue
 
         last_processed_id = frame_id
@@ -300,13 +322,39 @@ def embedding_worker():
         # klart. Minskar allokeringstakten (färre numpy-temporärer per
         # sekund), vilket sannolikt minskar frekvensen av Pythons GC-pauser
         # och därmed störningar på aiortc:s asynkrona händelseloop.
-        time.sleep(0.3)
+        stop_event.wait(0.3)
 
 
-if "embedding_worker_started" not in st.session_state:
-    worker_thread = threading.Thread(target=embedding_worker, daemon=True)
-    worker_thread.start()
-    st.session_state.embedding_worker_started = True
+def sync_embedding_worker(ctx):
+    """Säkerställer exakt en embedding_worker per session medan strömmen spelar.
+
+    Thread-objektet och dess stoppsignal lagras i st.session_state, så att
+    reruns inte startar nya trådar. En ny tråd startas bara om ingen finns,
+    om den tidigare har avslutats (t.ex. efter timeout) eller om den
+    håller på att stoppas. När strömmen inte spelar sätts stoppsignalen.
+
+    Parameters
+    ----------
+    ctx : streamlit_webrtc.WebRtcStreamerContext
+        Kontexten från webrtc_streamer(), vars state.playing styr workern.
+    """
+    thread = st.session_state.get("embedding_worker_thread")
+    stop_event = st.session_state.get("embedding_worker_stop_event")
+
+    if ctx.state.playing:
+        if thread is None or not thread.is_alive() or stop_event.is_set():
+            stop_event = threading.Event()
+            thread = threading.Thread(
+                target=embedding_worker,
+                args=(latest_frame_store, result_store, stop_event),
+                name="embedding_worker",
+                daemon=True,
+            )
+            thread.start()
+            st.session_state.embedding_worker_thread = thread
+            st.session_state.embedding_worker_stop_event = stop_event
+    elif stop_event is not None:
+        stop_event.set()
 
 
 ctx = webrtc_streamer(
@@ -318,7 +366,10 @@ ctx = webrtc_streamer(
 
 @st.fragment(run_every=1.0)
 def render_status_panel():
-    """Renderar statusrad och (villkorlig) reset-knapp.
+    """Renderar statusrad och (villkorlig) reset-knapp, och övervakar
+    embedding_worker via sync_embedding_worker() så att en worker som
+    avslutats under pågående ström (t.ex. efter ett nätverksavbrott
+    längre än STREAM_TIMEOUT_SECONDS) startas om inom en sekund.
 
     Körs som en Streamlit-fragment snarare än en blockerande while-loop:
     en fragment kan köras om både periodiskt (run_every) och vid
@@ -333,6 +384,8 @@ def render_status_panel():
     annars är ensam skrivare - se force_reset()-docstring i
     scan_state_machine.py.
     """
+    sync_embedding_worker(ctx)
+
     state = scan_state_machine.state
 
     if state in (ScanState.WELCOME, ScanState.RESULT_DENIED):
