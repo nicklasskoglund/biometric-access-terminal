@@ -8,6 +8,7 @@ Detta är den körbara Streamlit-entrypointen. Återanvändbar pipeline-logik
 och scanningsflödets tillståndsmaskin ligger i app/.
 """
 
+import logging
 import sys
 import threading
 import time
@@ -56,6 +57,8 @@ NUM_AGE_CLASSES = 121
 # som kan sätta stoppsignalen) och avslutar sig själv. video_frame_callback
 # skriver till latest_frame_store varje frame, även utan ansikte.
 STREAM_TIMEOUT_SECONDS = 10.0
+
+logger = logging.getLogger(__name__)
 
 
 class AuthorizationResultStore:
@@ -310,9 +313,13 @@ def embedding_worker(latest_frame_store, result_store, stop_event):
                 gender=estimated_gender,
                 auth_state=auth_state,
             )
-        except Exception as error:
+        except Exception:
+            # Hela exceptionen (med traceback) loggas till serverloggen,
+            # medan besökaren bara ser ett generiskt meddelande - råa
+            # felmeddelanden kan avslöja sökvägar och interna detaljer.
+            logger.exception("Analys av frame misslyckades i embedding_worker")
             result_store.update(
-                status=f"fel: {error}", probability=None, age=None, gender=None, auth_state="error"
+                status="fel vid analys, försök igen", probability=None, age=None, gender=None, auth_state="error"
             )
 
         # Medveten paus mellan klassificeringar. Ingen funktionell anledning
