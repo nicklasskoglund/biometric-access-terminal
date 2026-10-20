@@ -363,11 +363,55 @@ def sync_embedding_worker(ctx):
         stop_event.set()
 
 
+def get_rtc_configuration():
+    """Bygger WebRTC-konfigurationen med TURN-server från st.secrets.
+
+    På Streamlit Community Cloud räcker inte STUN för att etablera
+    WebRTC-anslutningen, så en TURN-server krävs. Uppgifterna läses från
+    sektionen [turn] i .streamlit/secrets.toml lokalt, eller i appens
+    Secrets-inställningar på Community Cloud. Se
+    .streamlit/secrets.toml.example.
+
+    Säkerhet: ExpressTURN:s gratisplan använder statiska (long-term)
+    credentials. De skickas till webbläsaren som en del av ICE-
+    konfigurationen och kan läsas av alla som öppnar appen, t.ex. via
+    chrome://webrtc-internals. Det värsta som kan hända är att någon annan
+    förbrukar månadskvoten. Vid misstänkt missbruk roteras de med
+    "Refresh Credentials" i ExpressTURN-dashboarden, varefter [turn] i
+    Cloud-secrets uppdateras med de nya värdena.
+
+    Returns
+    -------
+    dict | None
+        rtc_configuration för webrtc_streamer(), eller None om TURN-secrets
+        saknas. Vid None använder streamlit-webrtc Googles publika
+        STUN-server, vilket räcker för lokal körning. Fallbacken loggas
+        som varning, så att en felkonfiguration syns i Cloud-loggen.
+    """
+    try:
+        turn = st.secrets["turn"]
+        urls = turn["urls"]
+        turn_server = {
+            # list() på en sträng skulle ge enskilda tecken utan att något
+            # fel uppstår, så en ensam URL-sträng läggs i en lista.
+            "urls": [urls] if isinstance(urls, str) else list(urls),
+            "username": turn["username"],
+            "credential": turn["credential"],
+        }
+    except (KeyError, FileNotFoundError):
+        logger.warning("TURN not configured in st.secrets, falling back to STUN")
+        return None
+    # STUN först, så att direkta anslutningar används när det går. Då
+    # reläas bara trafik som verkligen behöver det, och kvoten sparas.
+    return {"iceServers": [{"urls": "stun:stun.l.google.com:19302"}, turn_server]}
+
+
 ctx = webrtc_streamer(
     key="biometric-access-terminal",
     video_frame_callback=video_frame_callback,
     media_stream_constraints={"video": True, "audio": False},
     async_processing=True,
+    rtc_configuration=get_rtc_configuration(),
 )
 
 @st.fragment(run_every=1.0)
