@@ -15,6 +15,18 @@ import faulthandler
 # Måste ligga före de tunga importerna (cv2, mediapipe, tensorflow).
 faulthandler.enable()
 
+# streamlit_webrtc (och därmed aiortc och pylibsrtp) MÅSTE importeras före
+# cv2, mediapipe och tensorflow/keras. På Linux laddar TensorFlow sina
+# native-bibliotek med RTLD_GLOBAL, och libtensorflow_framework exporterar
+# BoringSSL:s EVP/AES-symboler. pylibsrtp har libsrtp och OpenSSL statiskt
+# inbyggt, men om den laddas efter TensorFlow kopplas dess kryptoanrop till
+# BoringSSL, och processen segfaultar i srtp_init() vid import (verifierat i
+# en python:3.12-slim-trixie-container, samma miljö som Community Cloud).
+# Python laddar extensions med RTLD_NOW, så när aiortc laddas först binds
+# symbolerna till de egna kopiorna och förblir korrekta även efter att
+# TensorFlow laddats. Ordningen får därför inte ändras av importsortering.
+from streamlit_webrtc import webrtc_streamer  # noqa: E402  # isort: skip
+
 import logging
 import sys
 import threading
@@ -27,7 +39,6 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer
 
 from app.model_loader import (
     load_age_gender_model,
