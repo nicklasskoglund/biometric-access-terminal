@@ -48,9 +48,7 @@ dashboard with a full sci-fi HUD is functional end-to-end. See
   design.
 
 **Upcoming:**
-- Upload trained models (`authorization_classifier.keras`,
-  `age_gender_model.keras`) to Hugging Face Hub, for cloud deployment
-- Deploy to Streamlit Community Cloud
+- Deploy to Streamlit Community Cloud (see [Deployment](#deployment-streamlit-community-cloud))
 
 ## Project Structure
 
@@ -61,7 +59,7 @@ biometric-access-terminal/
 ├── src/                # Reusable Python code
 ├── app/                # Streamlit dashboard
 ├── docs/               # Design documentation
-├── models/             # Trained and pretrained models (not in git)
+├── models/             # Models used by the app (tracked in git, see below)
 └── reports/
     ├── figures/        # Generated visualizations (in git)
     └── metrics/        # Per-model evaluation metrics, JSON (in git)
@@ -82,11 +80,34 @@ biometric-access-terminal/
 
 ### Python environment
 
+Requires Python 3.12.
+
+Windows (Git Bash):
+
 ```bash
-python -m venv .venv
+py -3.12 -m venv .venv
 source .venv/Scripts/activate
-pip install -r requirements.txt
 ```
+
+macOS/Linux:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+```
+
+Then install the dependencies:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+- `requirements.txt`: runtime dependencies for the Streamlit app only
+  (this is what Streamlit Community Cloud installs).
+- `requirements-dev.txt`: everything in `requirements.txt` plus notebooks,
+  training and tests (`pytest`).
+
+To only run the app, `pip install -r requirements.txt` is enough.
 
 ### Dataset
 
@@ -98,28 +119,28 @@ The project uses the WIKI subset of the IMDB-WIKI dataset (the
 # Source: https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/static/wiki_crop.tar
 ```
 
-### Pretrained face detection model (BlazeFace)
+### Models
 
-The live pipeline uses MediaPipe's BlazeFace model (short range) for face
-detection. This file is not downloaded automatically and must be fetched
-manually once:
+All model files the app needs at runtime are small (< 5 MB each) and are
+tracked in git, so no manual download is required:
 
-```bash
-mkdir -p models/pretrained/face_detector
-curl -L -o models/pretrained/face_detector/blaze_face_short_range.tflite https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite
-```
+| File | Purpose | Source |
+|---|---|---|
+| `models/pretrained/face_detector/blaze_face_short_range.tflite` | Face detection (BlazeFace) | [MediaPipe](https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite) |
+| `models/pretrained/face_mesh/face_landmarker.task` | 478 face landmarks for EAR-based blink detection (`src/liveness.py`) | [MediaPipe](https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task) |
+| `models/trained/authorization_classifier.keras` | Access classification | Trained in notebook 04 |
+| `models/trained/age_gender_model.keras` | Age and gender estimation | Trained in notebook 05 |
 
-### Pretrained face landmark model (Face Mesh)
+The MediaPipe models are © Google and distributed under the
+[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 
-Liveness detection uses MediaPipe's FaceLandmarker model to extract 478
-face landmarks (among other things, for EAR-based blink detection, see
-`src/liveness.py`). This file is not downloaded automatically and must
-be fetched manually once, separately from the BlazeFace model above:
+The ArcFace weights (~137 MB) are not in the repo. DeepFace downloads them
+automatically to `~/.deepface/weights/` the first time an embedding is
+computed, so the first scan after a fresh start is slower.
 
-```bash
-mkdir -p models/pretrained/face_mesh
-curl -L -o models/pretrained/face_mesh/face_landmarker.task https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
-```
+Only the files listed above are tracked. Other files under `models/`
+(e.g. experiments or checkpoints) stay gitignored until they are
+explicitly added to `.gitignore`'s exceptions.
 
 ### Your own authorized face images
 
@@ -129,15 +150,19 @@ stored in `data/raw/authorized_captures/`, which is gitignored — anyone
 using this repo needs to collect their own images via notebook 04, Part
 B, before the rest of that notebook can run.
 
+Note that the committed `authorization_classifier.keras` is trained on the
+author's face, so other people will get ACCESS DENIED unless they retrain
+it on their own images.
+
 ### Running the dashboard
 
 ```bash
 streamlit run app/streamlit_app.py
 ```
 
-Requires the pretrained models above (BlazeFace, Face Mesh) plus your
-own trained `authorization_classifier.keras` and `age_gender_model.keras`
-in `models/trained/` (produced by notebooks 04 and 05).
+No secrets are needed locally: without a TURN configuration the app logs
+a warning and falls back to Google's public STUN server, which is enough
+on a local network.
 
 ### Reproducibility
 
@@ -145,3 +170,46 @@ Model training in notebooks 04 and 05 uses `keras.utils.set_random_seed(42)`
 for deterministic, reproducible results. Evaluation metrics are saved to
 `reports/metrics/*.json` at training time and read from there by
 notebook 06, rather than being hardcoded.
+
+## Deployment (Streamlit Community Cloud)
+
+The app is deployed from the `main` branch.
+
+1. On [share.streamlit.io](https://share.streamlit.io), create an app from
+   this repository, branch `main`, main file path `app/streamlit_app.py`.
+2. Under **Advanced settings**, select **Python 3.12**. The Python version
+   cannot be changed after deployment without deleting and redeploying
+   the app.
+3. In the **Secrets** field, paste the `[turn]` section from
+   [`.streamlit/secrets.toml.example`](.streamlit/secrets.toml.example)
+   with your own TURN server values (see below).
+4. Deploy. Community Cloud installs `requirements.txt` (Python packages)
+   and `packages.txt` (system libraries needed by OpenCV).
+
+### TURN server
+
+WebRTC on Community Cloud needs a TURN server; STUN alone does not
+establish the connection. The app reads the TURN server from the `[turn]`
+section in `st.secrets` (`get_rtc_configuration()` in
+`app/streamlit_app.py`) and passes it to `streamlit-webrtc` together with
+Google's public STUN server. The deployment uses
+[ExpressTURN](https://www.expressturn.com/)'s free plan (1,000 GB/month).
+
+For local use, copy the template to `.streamlit/secrets.toml` (gitignored).
+
+### Known limitations
+
+- **Static TURN credentials are visible in the browser.** The free
+  ExpressTURN plan only offers long-term username/password credentials,
+  which are sent to the browser as part of the ICE configuration. Anyone
+  using the app can read them (e.g. via `chrome://webrtc-internals`) and
+  use the monthly quota. If that happens, rotate them with "Refresh
+  Credentials" in the ExpressTURN dashboard and update the app's secrets.
+- **Port 3478 only.** The free plan does not support TURN over port 443,
+  so networks that only allow port 443 (some corporate or school networks)
+  may block the video connection.
+- **Memory.** Measured locally, the app uses about 1.1 GB with one active
+  session and about 1.16 GB with two (TensorFlow, ArcFace and MediaPipe).
+  This is within Community Cloud's documented limit, but if the app shows
+  "This app has gone over its resource limits", [Render](https://render.com)
+  is the fallback hosting option.
