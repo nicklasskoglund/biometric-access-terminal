@@ -1,8 +1,6 @@
 # Runtime-beroenden för Streamlit-appen (det Streamlit Community Cloud installerar).
 # Notebooks, träning och tester: se requirements-dev.txt.
 streamlit==1.62.0
-# 0.78+ hämtar TURN-credentials från Cloudflare Realtime när
-# CLOUDFLARE_TURN_KEY_ID/CLOUDFLARE_TURN_KEY_API_TOKEN är satta.
 streamlit-webrtc==0.78.1
 deepface==0.0.100
 tensorflow==2.21.0
