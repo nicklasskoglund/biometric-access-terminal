@@ -8,6 +8,13 @@ Detta är den körbara Streamlit-entrypointen. Återanvändbar pipeline-logik
 och scanningsflödets tillståndsmaskin ligger i app/.
 """
 
+import faulthandler
+
+# TEMP (fix/cloud-segfault): skriver ut Python-stacken för alla trådar
+# till stderr vid en segfault, så att den syns i Community Cloud-loggen.
+# Måste ligga före de tunga importerna (cv2, mediapipe, tensorflow).
+faulthandler.enable()
+
 import logging
 import sys
 import threading
