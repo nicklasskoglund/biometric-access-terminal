@@ -224,8 +224,23 @@ data/processed/*
 data/embeddings/*
 !data/embeddings/.gitkeep
 
+# Modellfilerna som appen laddar vid körning spåras i git (alla < 5 MB),
+# så att deployen inte kräver nedladdning vid start. Filerna listas
+# explicit, så att nya experiment eller checkpoints under models/
+# fortsätter att ignoreras tills de medvetet läggs till här.
 models/*
 !models/.gitkeep
+!models/trained/
+models/trained/*
+!models/trained/authorization_classifier.keras
+!models/trained/age_gender_model.keras
+!models/pretrained/
+models/pretrained/*
+!models/pretrained/face_detector/
+!models/pretrained/face_mesh/
+models/pretrained/*/*
+!models/pretrained/face_detector/blaze_face_short_range.tflite
+!models/pretrained/face_mesh/face_landmarker.task
 
 # VS Code
 .vscode/
