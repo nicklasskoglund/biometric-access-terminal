@@ -10,9 +10,11 @@ och scanningsflödets tillståndsmaskin ligger i app/.
 
 import faulthandler
 
-# TEMP (fix/cloud-segfault): skriver ut Python-stacken för alla trådar
-# till stderr vid en segfault, så att den syns i Community Cloud-loggen.
-# Måste ligga före de tunga importerna (cv2, mediapipe, tensorflow).
+# Skriver ut Python-stacken för alla trådar till stderr vid en krasch i
+# native-kod (t.ex. segfault), så att den syns i serverloggen även när ingen
+# Python-traceback uppstår. Användes för att hitta symbolkonflikten mellan
+# pylibsrtp och TensorFlow nedan. Måste ligga före alla andra imports, så
+# att även krascher under import fångas.
 faulthandler.enable()
 
 # streamlit_webrtc (och därmed aiortc och pylibsrtp) MÅSTE importeras före
